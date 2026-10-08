@@ -7,7 +7,7 @@ import type { VfxSystem } from '../systems/Vfx';
 import type { Hud } from '../ui/Hud';
 import type { MaterialLibrary } from '../render/Materials';
 import { t } from '../ui/i18n';
-import { CroissantShape, RopeShape, baguetteRope, croissantRope, pretzelCenter, pretzelRope, pretzelTwist } from './BreadShapes';
+import { CroissantShape, RopeShape, baguetteRope, croissantRope, pretzelRope, pretzelTwist } from './BreadShapes';
 
 /**
  * Cooking-Mama style direct manipulation on the workbench. The mouse drives a
@@ -987,21 +987,34 @@ export class RopeRollGame implements Minigame {
       if (this.twist >= 1) this.nextPiece(io, slot);
     }
     if (this.done) return true;
-    // Hands: palms on the rope while rolling; holding both ends while twisting.
     const tw = this.stage === 'twist';
+    if (tw) {
+      // Twisting: the left hand steps back out of frame and the right hand
+      // circles just outside the knot, pinching the rope end, so the shape
+      // stays in full view.
+      d.tools.left.root.visible = false;
+      const right = d.tools.right;
+      const ph = this.circle.phase;
+      // Orbit well outside the knot (it's ~0.1 m across) and stay low.
+      const at = new THREE.Vector3(Math.cos(ph) * 0.2, 0, Math.sin(ph) * 0.15 + 0.03).add(slot);
+      right.root.position.lerp(at.setY(d.planeY + 0.035), Math.min(1, dt * 14));
+      right.root.rotation.set(0.35, Math.atan2(slot.x - at.x, slot.z - at.z) * 0.4, 0);
+      BenchTools.pose(right, 0.1, 0.8);
+      return false;
+    }
+    d.tools.left.root.visible = true;
+    // Rolling: both palms on the rope, sliding apart as it lengthens.
     const hz = p ? THREE.MathUtils.clamp(p.z, slot.z - 0.07, slot.z + 0.07) : slot.z + 0.03;
-    const ends = [0.04, 0.96].map((tt) => pretzelCenter(tt, this.twist, new THREE.Vector3()).multiplyScalar(sx).add(slot));
-    for (const [hand, sgn, end] of [
-      [d.tools.left, -1, ends[0]],
-      [d.tools.right, 1, ends[1]],
+    for (const [hand, sgn] of [
+      [d.tools.left, -1],
+      [d.tools.right, 1],
     ] as const) {
-      const x = tw ? end.x : slot.x + ((sgn * len) / 2) * 0.5;
-      const z = tw ? end.z + 0.02 : hz;
-      const top = surfaceY(piece.mesh, x, z, d.planeY + 0.04);
-      const y = top + (tw ? 0.012 : pressing ? -0.006 : 0.03);
-      hand.root.position.lerp(new THREE.Vector3(x, y, z + 0.015), Math.min(1, dt * 20));
-      hand.root.rotation.set(pressing ? 0.15 : 0.05, -sgn * (tw ? 0.5 : 0.15), 0);
-      BenchTools.pose(hand, tw ? 0.2 : pressing ? 0.8 : 0.2, tw ? 0.75 : 0.1);
+      const x = slot.x + ((sgn * len) / 2) * 0.5;
+      const top = surfaceY(piece.mesh, x, hz, d.planeY + 0.04);
+      const y = top + (pressing ? -0.006 : 0.03);
+      hand.root.position.lerp(new THREE.Vector3(x, y, hz + 0.015), Math.min(1, dt * 20));
+      hand.root.rotation.set(pressing ? 0.15 : 0.05, -sgn * 0.15, 0);
+      BenchTools.pose(hand, pressing ? 0.8 : 0.2, 0.1);
     }
     return false;
   }
@@ -1027,6 +1040,7 @@ export class RopeRollGame implements Minigame {
   }
 
   dispose(): void {
+    this.deps.tools.left.root.visible = true;
     this.deps.tools.clear();
   }
 }

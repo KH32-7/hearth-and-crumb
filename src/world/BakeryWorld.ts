@@ -543,21 +543,15 @@ export class BakeryWorld {
         rack.add(post);
       }
     }
-    const trayStack: THREE.Object3D[] = [];
     for (let i = 0; i < 5; i++) {
       const shelf = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.012, 0.64), m.steel);
       shelf.position.y = 0.25 + i * 0.28;
       rack.add(shelf);
-      const tray = k.sheetTray();
-      tray.rotation.y = Math.PI / 2;
-      tray.position.y = 0.26 + i * 0.28;
-      rack.add(tray);
-      trayStack.push(tray);
     }
     this.add(shadowed(rack), rackX, 0, rackZ);
     const trayRack = new THREE.Object3D();
     trayRack.position.set(rackX, 1.0, rackZ);
-    trayRack.userData.stack = trayStack;
+    trayRack.userData.shelves = [0, 1, 2, 3, 4].map((i) => new THREE.Vector3(rackX, 0.262 + i * 0.28, rackZ));
     this.group.add(trayRack);
     this.block(rackX - 0.28, rackZ - 0.38, ROOM.maxX, rackZ + 0.38);
 

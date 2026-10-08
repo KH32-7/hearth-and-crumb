@@ -422,62 +422,162 @@ export class WorkbenchStation extends Station {
   }
 }
 
-// ---------------------------------------------------------------- Proofer
+// ---------------------------------------------------------------- Shelved storage (proofer, tray rack)
 
-const PROOF_RATE = 1 / 16;
+/** Short "what's on this tray" text for prompts. */
+function trayLabel(tray: Tray): string {
+  const name = t(`recipe.${tray.recipe}` as 'recipe.roll');
+  if (tray.baked) return t('tray.baked', { name });
+  if (tray.proof < 0.05) return t('tray.raw', { name });
+  return t('tray.proofed', { name, pct: Math.round(Math.min(1, tray.proof) * 100) });
+}
 
-export class ProoferStation extends Station {
-  id = 'proofer';
-  roots: THREE.Object3D[];
-  tray: Tray | null = null;
-  private doorOpen = 0;
-  private doorTarget = 0;
-  private readonly door: THREE.Group;
-  private dinged = false;
-
-  constructor(ctx: Ctx, private readonly cabinet: THREE.Group) {
+/**
+ * A stack of shelves, one tray each. Looking at a shelf picks it: put a tray
+ * on the shelf you aim at (or the nearest free one), take the one you aim at.
+ */
+abstract class ShelfStation extends Station {
+  readonly trays: Array<Tray | null>;
+  constructor(
+    ctx: Ctx,
+    /** World positions of each shelf's tray anchor. */
+    protected readonly shelves: THREE.Vector3[],
+  ) {
     super(ctx);
-    this.roots = [cabinet];
-    this.door = cabinet.userData.door as THREE.Group;
+    this.trays = shelves.map(() => null);
   }
+
+  get count(): number {
+    return this.trays.filter(Boolean).length;
+  }
+
+  /** Shelf index nearest to where the player is looking. */
+  protected aimed(): number {
+    const y = this.ctx.interaction.hitPoint.y;
+    let best = 0;
+    let bestD = Infinity;
+    this.shelves.forEach((s, i) => {
+      const d = Math.abs(s.y + 0.05 - y);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  /** Free shelf to place onto: the aimed one if free, else the closest free one. */
+  protected freeSlot(): number {
+    const a = this.aimed();
+    if (!this.trays[a]) return a;
+    let best = -1;
+    for (let i = 0; i < this.trays.length; i++) if (!this.trays[i] && (best < 0 || Math.abs(i - a) < Math.abs(best - a))) best = i;
+    return best;
+  }
+
+  /** Tray to take: the aimed one, else the closest stored one. */
+  protected takeSlot(): number {
+    const a = this.aimed();
+    if (this.trays[a]) return a;
+    let best = -1;
+    for (let i = 0; i < this.trays.length; i++) if (this.trays[i] && (best < 0 || Math.abs(i - a) < Math.abs(best - a))) best = i;
+    return best;
+  }
+
+  protected abstract accepts(tray: Tray): boolean;
+  protected abstract placed(i: number, tray: Tray): void;
+  protected abstract taken(i: number, tray: Tray): void;
 
   actionable(held: Held): boolean {
-    return (held?.kind === 'tray' && !this.tray && !held.tray.baked) || (!held && !!this.tray);
-  }
-
-  prompt(held: Held): string | null {
-    if (held?.kind === 'tray' && !this.tray) return held.tray.baked ? null : t('proofer.place');
-    if (!held && this.tray) {
-      const p = Math.round(Math.min(1, this.tray.proof) * 100);
-      return p >= 100 ? t('proofer.take') : `${t('proofer.wait', { pct: p })} · ${t('proofer.take')}`;
-    }
-    return null;
+    if (held?.kind === 'tray') return this.accepts(held.tray) && this.freeSlot() >= 0;
+    return !held && this.count > 0;
   }
 
   interact(held: Held): void {
     const ctx = this.ctx;
-    if (held?.kind === 'tray' && !this.tray && !held.tray.baked) {
+    if (held?.kind === 'tray' && this.accepts(held.tray)) {
+      const i = this.freeSlot();
+      if (i < 0) return;
       ctx.interaction.setHeld(null);
-      this.tray = held.tray;
-      const shelf = this.cabinet.localToWorld((this.cabinet.userData.shelf as THREE.Vector3).clone());
-      this.tray.group.position.copy(shelf);
-      this.tray.group.rotation.set(0, 0, 0);
-      this.tray.group.scale.setScalar(1.15);
-      ctx.scene.add(this.tray.group);
-      this.flapDoor();
-      this.dinged = false;
-      ctx.sfx('place_metal');
-      ctx.events.emit('tutorial', { step: 'proofing' });
+      this.trays[i] = held.tray;
+      held.tray.group.position.copy(this.shelves[i]);
+      held.tray.group.rotation.set(0, 0, 0);
+      held.tray.group.scale.setScalar(1);
+      ctx.scene.add(held.tray.group);
+      this.placed(i, held.tray);
       return;
     }
-    if (!held && this.tray) {
-      const tray = this.tray;
-      this.tray = null;
+    if (!held) {
+      const i = this.takeSlot();
+      const tray = i >= 0 ? this.trays[i] : null;
+      if (!tray) return;
+      this.trays[i] = null;
       tray.group.scale.setScalar(1);
       ctx.interaction.setHeld({ kind: 'tray', tray });
-      this.flapDoor();
-      ctx.sfx('pickup');
+      this.taken(i, tray);
     }
+  }
+}
+
+// ---------------------------------------------------------------- Proofer
+
+function worldShelves(cabinet: THREE.Object3D): THREE.Vector3[] {
+  cabinet.updateWorldMatrix(true, true);
+  return (cabinet.userData.shelves as THREE.Vector3[]).map((s) => cabinet.localToWorld(s.clone()));
+}
+
+const PROOF_RATE = 1 / 16;
+
+export class ProoferStation extends ShelfStation {
+  id = 'proofer';
+  roots: THREE.Object3D[];
+  private doorOpen = 0;
+  private doorTarget = 0;
+  private readonly door: THREE.Group;
+  private readonly dinged = new Set<Tray>();
+
+  constructor(ctx: Ctx, private readonly cabinet: THREE.Group) {
+    super(ctx, worldShelves(cabinet));
+    this.roots = [cabinet];
+    this.door = cabinet.userData.door as THREE.Group;
+  }
+
+  /** The tray furthest along (compat: recipe card, diagnostics). */
+  get tray(): Tray | null {
+    let best: Tray | null = null;
+    for (const t of this.trays) if (t && (!best || t.proof > best.proof)) best = t;
+    return best;
+  }
+
+  protected accepts(tray: Tray): boolean {
+    return !tray.baked;
+  }
+
+  prompt(held: Held): string | null {
+    const total = this.trays.length;
+    if (held?.kind === 'tray') {
+      if (held.tray.baked) return null;
+      return this.freeSlot() >= 0 ? t('proofer.place', { n: this.count + 1, total }) : t('proofer.full');
+    }
+    if (!held && this.count) {
+      const tray = this.trays[this.takeSlot()]!;
+      const p = Math.round(Math.min(1, tray.proof) * 100);
+      return p >= 100 ? `${t('proofer.take')} · ${t(`recipe.${tray.recipe}` as 'recipe.roll')}` : `${t('proofer.wait', { pct: p })} · ${t('proofer.take')}`;
+    }
+    return null;
+  }
+
+  protected placed(_i: number, tray: Tray): void {
+    tray.group.scale.setScalar(1.15);
+    this.flapDoor();
+    this.dinged.delete(tray);
+    this.ctx.sfx('place_metal');
+    this.ctx.events.emit('tutorial', { step: 'proofing' });
+  }
+
+  protected taken(): void {
+    this.flapDoor();
+    this.ctx.sfx('pickup');
   }
 
   private flapDoor(): void {
@@ -488,23 +588,70 @@ export class ProoferStation extends Station {
   update(dt: number): void {
     this.doorOpen += (this.doorTarget - this.doorOpen) * Math.min(1, dt * 8);
     this.door.rotation.y = -this.doorOpen * 1.6;
-    if (this.tray) {
-      this.tray.forEach((b) => {
+    for (const tray of this.trays) {
+      if (!tray) continue;
+      tray.forEach((b) => {
         const rate = (b.proof < 1 ? PROOF_RATE : PROOF_RATE * 0.25) * (this.ctx.state.rush ? 1.6 : 1);
         b.proof = Math.min(1.25, b.proof + rate * dt);
       });
-      if (!this.dinged && this.tray.proof >= 1) {
-        this.dinged = true;
+      if (!this.dinged.has(tray) && tray.proof >= 1) {
+        this.dinged.add(tray);
         this.ctx.sfx('good_chime', 0.6);
       }
     }
   }
 
   labels(): void {
-    if (!this.tray) return;
-    const p = Math.min(1.25, this.tray.proof);
-    const pos = this.cabinet.localToWorld(new THREE.Vector3(0, 1.55, 0.35));
-    this.ctx.hud.label('proofer', pos, this.ctx.camera, `발효 ${Math.round(Math.min(1, p) * 100)}%<div class="meter proof"><i style="width:${(p / 1.25) * 100}%"></i><span class="zone" style="left:${(1 / 1.25) * 100 - 2}%;width:${(0.12 / 1.25) * 100}%"></span></div>`);
+    if (!this.count) return;
+    const rows = this.trays
+      .map((tray, i) => ({ tray, i }))
+      .filter((r) => r.tray)
+      .reverse()
+      .map(({ tray, i }) => {
+        const p = Math.min(1.25, tray!.proof);
+        return `<div class="prow"><b>${i + 1}</b> ${RECIPES[tray!.recipe].icon} ${Math.round(Math.min(1, p) * 100)}%<div class="meter proof"><i style="width:${(p / 1.25) * 100}%"></i><span class="zone" style="left:${(1 / 1.25) * 100 - 2}%;width:${(0.12 / 1.25) * 100}%"></span></div></div>`;
+      })
+      .join('');
+    const pos = this.cabinet.localToWorld(new THREE.Vector3(0, 1.75, 0.35));
+    this.ctx.hud.label('proofer', pos, this.ctx.camera, `발효실${rows}`);
+  }
+}
+
+// ---------------------------------------------------------------- Tray storage rack
+
+export class TrayRackStation extends ShelfStation {
+  id = 'rack';
+  roots: THREE.Object3D[];
+  private readonly hit: THREE.Mesh;
+
+  constructor(ctx: Ctx, anchor: THREE.Object3D) {
+    super(ctx, anchor.userData.shelves as THREE.Vector3[]);
+    this.hit = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.5, 0.7), new THREE.MeshBasicMaterial({ visible: false }));
+    this.hit.position.set(anchor.position.x, 0.78, anchor.position.z);
+    ctx.scene.add(this.hit);
+    this.roots = [this.hit];
+    this.highlight = [];
+  }
+
+  protected accepts(): boolean {
+    return true;
+  }
+
+  prompt(held: Held): string | null {
+    const total = this.trays.length;
+    if (held?.kind === 'tray') return this.freeSlot() >= 0 ? t('rack.store', { n: this.count + 1, total }) : t('rack.full');
+    if (!held && this.count) return t('rack.takeStored', { what: trayLabel(this.trays[this.takeSlot()]!) });
+    return held ? null : t('rack.empty');
+  }
+
+  protected placed(_i: number, tray: Tray): void {
+    // The rack is deep and narrow: trays slide in sideways.
+    tray.group.rotation.y = Math.PI / 2;
+    this.ctx.sfx('place_metal');
+  }
+
+  protected taken(): void {
+    this.ctx.sfx('place_metal', 0.5);
   }
 }
 

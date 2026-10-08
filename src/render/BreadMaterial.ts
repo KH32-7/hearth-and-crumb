@@ -93,9 +93,9 @@ vBreadPos = position;
 vBreadNormal = normal;
 vScore = aScore;
 vGlaze = aGlaze;
-// A fresh cut is a shallow groove; in the oven the ridges heave up and open (oven spring).
-transformed += normal * aScore * (uBloom * 0.014 - 0.01 * (1.0 - uBloom));
-transformed.y += aScore * uBloom * 0.01;`,
+// A cut is a groove; in the oven it opens a little wider and deeper (the crust
+// either side springs apart) rather than bulging out.
+transformed -= normal * aScore * (0.009 + 0.005 * uBloom);`,
         );
       shader.fragmentShader = shader.fragmentShader
         .replace(

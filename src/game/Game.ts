@@ -21,7 +21,7 @@ import { VfxSystem } from '../systems/Vfx';
 import { AudioSystem } from '../systems/AudioSystem';
 import { GameState, DAY_LENGTH_SECONDS, DEFAULT_SETTINGS, RUSH_SECONDS, type Settings, type SaveData } from './State';
 import { RECIPES, RECIPE_ORDER, type RecipeId } from './Recipes';
-import { BinStation, DisplayBasket, MixerStation, OvenStation, PantryItem, ProoferStation, WorkbenchStation, type Ctx, type Station } from './Stations';
+import { BinStation, DisplayBasket, MixerStation, OvenStation, PantryItem, ProoferStation, TrayRackStation, WorkbenchStation, type Ctx, type Station } from './Stations';
 import { CustomerManager } from './Customers';
 import { BenchTools } from './Tactile';
 import { setLang, t, won } from '../ui/i18n';
@@ -63,6 +63,7 @@ export class Game {
   readonly bench: WorkbenchStation;
   readonly proofer: ProoferStation;
   readonly oven: OvenStation;
+  readonly rack: TrayRackStation;
   readonly breadTuning = BREAD_TUNING;
   batchStats = { before: 0, after: 0 };
   private readonly ctx: Ctx;
@@ -153,7 +154,8 @@ export class Game {
     this.bench = new WorkbenchStation(this.ctx, a.workbench);
     this.proofer = new ProoferStation(this.ctx, a.proofer);
     this.oven = new OvenStation(this.ctx, a.oven);
-    this.stations.push(this.mixer, this.bench, this.proofer, this.oven, new BinStation(this.ctx, a.bin));
+    this.rack = new TrayRackStation(this.ctx, a.trayRack);
+    this.stations.push(this.mixer, this.bench, this.proofer, this.oven, this.rack, new BinStation(this.ctx, a.bin));
     a.displaySlots.forEach((s, i) => {
       const b = new DisplayBasket(this.ctx, s, i);
       this.baskets.push(b);

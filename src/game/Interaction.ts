@@ -25,6 +25,8 @@ const REACH = 2.3;
  */
 export class Interaction {
   hovered: Interactable | null = null;
+  /** World point the centre ray hit on the hovered interactable. */
+  readonly hitPoint = new THREE.Vector3();
   held: Held = null;
   private readonly list: Interactable[] = [];
   private readonly raycaster = new THREE.Raycaster();
@@ -119,6 +121,7 @@ export class Interaction {
       while (o && !owner.has(o)) o = o.parent;
       if (o) {
         found = owner.get(o)!;
+        this.hitPoint.copy(h.point);
         break;
       }
       break;

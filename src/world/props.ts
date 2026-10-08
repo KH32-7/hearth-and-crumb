@@ -621,6 +621,7 @@ export class PropKit {
     g.add(dial, face);
     g.userData.door = doorPivot;
     g.userData.shelf = new THREE.Vector3(0, 0.35 + 0.38 * 1 + 0.01, 0);
+    g.userData.shelves = [0, 1, 2, 3].map((i) => new THREE.Vector3(0, 0.35 + 0.38 * i + 0.01, 0));
     return shadowed(g);
   }
 
