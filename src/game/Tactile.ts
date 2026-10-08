@@ -232,6 +232,53 @@ function distToSegment2(px: number, pz: number, ax: number, az: number, bx: numb
   return (px - cx) * (px - cx) + (pz - cz) * (pz - cz);
 }
 
+/**
+ * Circling detector that works wherever the (invisible) cursor happens to be:
+ * it measures how much the direction of motion turns, so any loop drawn
+ * anywhere on screen counts. Back-and-forth scrubbing doesn't.
+ */
+class CircleGesture {
+  private readonly last = new THREE.Vector2(NaN, NaN);
+  private readonly acc = new THREE.Vector2();
+  private heading: number | null = null;
+  /** Total absolute turning (rad). */
+  turned = 0;
+  /** Signed turning, for animating the hand around the piece. */
+  phase = 0;
+
+  reset(): void {
+    this.turned = 0;
+    this.heading = null;
+    this.acc.set(0, 0);
+  }
+
+  /** Feed the cursor each frame; returns the signed turn this frame. */
+  update(cursor: THREE.Vector2): number {
+    if (Number.isNaN(this.last.x)) {
+      this.last.copy(cursor);
+      return 0;
+    }
+    this.acc.x += cursor.x - this.last.x;
+    this.acc.y += cursor.y - this.last.y;
+    this.last.copy(cursor);
+    if (this.acc.length() < 5) return 0;
+    const h = Math.atan2(this.acc.y, this.acc.x);
+    this.acc.set(0, 0);
+    if (this.heading === null) {
+      this.heading = h;
+      return 0;
+    }
+    let d = h - this.heading;
+    if (d > Math.PI) d -= Math.PI * 2;
+    if (d < -Math.PI) d += Math.PI * 2;
+    this.heading = h;
+    if (Math.abs(d) > 1.3) return 0;
+    this.turned += Math.abs(d);
+    this.phase += d;
+    return d;
+  }
+}
+
 // ---------------------------------------------------------------- 1. Knead
 
 export class KneadGame implements Minigame {
@@ -570,11 +617,9 @@ export class RoundTactileGame implements Minigame {
   readonly hideCursor = true;
   score = 0;
   private index = 0;
-  private angle = 0;
-  private lastA: number | null = null;
   private timer = 0;
   private readonly times: number[] = [];
-  private readonly p = new THREE.Vector3();
+  private readonly circle = new CircleGesture();
 
   constructor(
     private readonly deps: TactileDeps,
@@ -589,7 +634,7 @@ export class RoundTactileGame implements Minigame {
   }
 
   help(): string {
-    return t('mg.round.help', { n: this.index, total: this.tray.breads.length });
+    return t('mg.round.help', { n: this.index, total: this.tray.breads.length, pct: Math.round(Math.min(1, this.circle.turned / (Math.PI * 4)) * 100) });
   }
 
   update(dt: number, io: MinigameIO): boolean {
@@ -598,27 +643,13 @@ export class RoundTactileGame implements Minigame {
     if (!piece) return true;
     this.timer += dt;
     const slot = this.tray.group.localToWorld(this.tray.slots[this.index].clone());
-    const center = toScreen(slot.clone().setY(slot.y + 0.03), io);
-    const dx = io.cursor.x - center.x;
-    const dy = io.cursor.y - center.y;
-    const dist = Math.hypot(dx, dy);
-    let dA = 0;
-    if (dist > 10 && dist < 240) {
-      const a = Math.atan2(dy, dx);
-      if (this.lastA !== null) {
-        dA = a - this.lastA;
-        if (dA > Math.PI) dA -= Math.PI * 2;
-        if (dA < -Math.PI) dA += Math.PI * 2;
-        this.angle += Math.abs(dA);
-        if (Math.floor((this.angle - Math.abs(dA)) / Math.PI) !== Math.floor(this.angle / Math.PI)) d.sfx('roll_shape', 0.5);
-      }
-      this.lastA = a;
-    } else this.lastA = null;
-    const progress = Math.min(1, this.angle / (Math.PI * 4));
-    // Cupped hand follows the cursor in a small circle over the piece; the piece rolls under it.
-    const p = benchPoint(io, d.planeY, this.p);
-    const offset = new THREE.Vector3();
-    if (p) offset.set(p.x - slot.x, 0, p.z - slot.z).clampLength(0, 0.035);
+    const before = this.circle.turned;
+    const dA = this.circle.update(io.cursor);
+    if (Math.floor(before / Math.PI) !== Math.floor(this.circle.turned / Math.PI)) d.sfx('roll_shape', 0.5);
+    const progress = Math.min(1, this.circle.turned / (Math.PI * 4));
+    // Cupped hand circles over the piece in step with the mouse; the piece rolls under it.
+    const ph = this.circle.phase;
+    const offset = new THREE.Vector3(Math.cos(ph), 0, Math.sin(ph)).multiplyScalar(0.03);
     piece.shaped = 0.15 + 0.85 * progress;
     piece.apply();
     const wob = Math.sin(progress * Math.PI * 10) * 0.08 * (1 - progress);
@@ -637,8 +668,7 @@ export class RoundTactileGame implements Minigame {
       pop(d, io, slot.clone().add(new THREE.Vector3(0, 0.12, 0)), t('pop.round'), this.timer < 3.5 ? 'great' : 'good');
       piece.mesh.position.copy(this.tray.slots[this.index]);
       this.index++;
-      this.angle = 0;
-      this.lastA = null;
+      this.circle.reset();
       this.timer = 0;
       if (this.index >= this.tray.breads.length) {
         const avg = this.times.reduce((a, b) => a + b, 0) / this.times.length;
@@ -851,9 +881,8 @@ export class RopeRollGame implements Minigame {
   stage: 'roll' | 'twist' = 'roll';
   private progress = 0;
   private twist = 0;
-  private angle = 0;
+  private readonly circle = new CircleGesture();
   private lastZ: number | null = null;
-  private lastA: number | null = null;
   private travel = 0;
   private timer = 0;
   private squash = 0;
@@ -918,7 +947,8 @@ export class RopeRollGame implements Minigame {
     let pressing = false;
     this.squash = Math.max(0, this.squash - dt * 4);
     if (this.stage === 'roll') {
-      if (p && io.down && Math.abs(p.x - slot.x) < len / 2 + 0.14 && Math.abs(p.z - slot.z) < 0.17) {
+      // Hold anywhere: the hands are already on the rope.
+      if (p && io.down) {
         pressing = true;
         if (this.lastZ !== null) {
           // Rolling the rope back and forth under the palms lengthens it.
@@ -940,30 +970,17 @@ export class RopeRollGame implements Minigame {
       if (this.progress >= 1) {
         if (this.pretzel) {
           this.stage = 'twist';
-          this.lastA = null;
+          this.circle.reset();
           d.sfx('dough_plop', 0.5);
           pop(d, io, slot.clone().add(new THREE.Vector3(0, 0.12, 0)), t('pop.long'), 'good');
         } else this.nextPiece(io, slot);
       }
     } else {
       // Circle around the rope to cross the arms and fold the ends onto the belly.
-      const center = toScreen(slot.clone().setY(slot.y + 0.02), io);
-      const dx = io.cursor.x - center.x;
-      const dy = io.cursor.y - center.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 10 && dist < 260) {
-        const a = Math.atan2(dy, dx);
-        if (this.lastA !== null) {
-          let dA = a - this.lastA;
-          if (dA > Math.PI) dA -= Math.PI * 2;
-          if (dA < -Math.PI) dA += Math.PI * 2;
-          const before = this.angle;
-          this.angle += Math.abs(dA);
-          if (Math.floor(before / Math.PI) !== Math.floor(this.angle / Math.PI)) d.sfx('roll_shape', 0.5);
-        }
-        this.lastA = a;
-      } else this.lastA = null;
-      this.twist = Math.min(1, this.angle / (Math.PI * 3));
+      const before = this.circle.turned;
+      this.circle.update(io.cursor);
+      if (Math.floor(before / Math.PI) !== Math.floor(this.circle.turned / Math.PI)) d.sfx('roll_shape', 0.5);
+      this.twist = Math.min(1, this.circle.turned / (Math.PI * 3));
       pretzelTwist(this.shapes[this.index], this.twist);
       piece.shaped = 1;
       piece.apply();
@@ -998,9 +1015,8 @@ export class RopeRollGame implements Minigame {
     this.index++;
     this.progress = 0;
     this.twist = 0;
-    this.angle = 0;
+    this.circle.reset();
     this.stage = 'roll';
-    this.lastA = null;
     this.lastZ = null;
     this.timer = 0;
     if (this.index >= this.tray.breads.length) {
@@ -1070,11 +1086,10 @@ export class CroissantRollGame implements Minigame {
     this.slap = Math.max(0, this.slap - dt * 5);
     const slot = this.slotWorld(this.index);
     const p = benchPoint(io, d.planeY, this.p);
-    const near = (r: number) => !!p && Math.hypot(p.x - slot.x, p.z - slot.z) < r;
     const hand = d.tools.right;
     let target: THREE.Vector3;
     if (this.stage === 'flatten') {
-      if (io.pressed && near(0.15)) {
+      if (io.pressed) {
         this.slaps++;
         this.slap = 1;
         d.sfx(this.slaps === 1 ? 'knead_1' : 'knead_2', 0.8);
@@ -1104,7 +1119,7 @@ export class CroissantRollGame implements Minigame {
     } else {
       const shape = this.shape!;
       if (this.stage === 'roll') {
-        if (p && io.down && near(0.24)) {
+        if (p && io.down) {
           if (this.lastZ !== null) {
             // Only pushing away from you rolls it up.
             const fwd = this.lastZ - p.z;

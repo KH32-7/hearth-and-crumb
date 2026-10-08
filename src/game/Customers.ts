@@ -26,6 +26,8 @@ const OUTFITS = [
  * rigged models replace the visual.
  */
 export class Customer {
+  private static nextId = 1;
+  readonly id = Customer.nextId++;
   readonly group = new THREE.Group();
   phase: Phase = 'enter';
   private path: THREE.Vector3[] = [];
@@ -450,10 +452,10 @@ export class CustomerManager {
   }
 
   /** Open time-attack orders for the HUD tickets (oldest first). */
-  orders(): Array<{ recipe: RecipeId; left: number; got: boolean }> {
+  orders(): Array<{ id: number; recipe: RecipeId; left: number; got: boolean }> {
     return this.customers
       .filter((c) => c.want && (c.phase === 'enter' || c.phase === 'browse' || c.phase === 'toQueue' || c.phase === 'queue'))
-      .map((c) => ({ recipe: c.want!, left: Math.max(0, 1 - c.visit / c.patience), got: !!c.bought }));
+      .map((c) => ({ id: c.id, recipe: c.want!, left: Math.max(0, 1 - c.visit / c.patience), got: !!c.bought }));
   }
 }
 

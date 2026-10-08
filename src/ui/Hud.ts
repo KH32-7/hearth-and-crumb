@@ -27,7 +27,8 @@ export class Hud {
   private readonly labelUsed = new Set<string>();
   private lastStatus = '';
   private lastRecipe = '';
-  private lastRush = '';
+  private rushUi: { timer: HTMLElement; score: HTMLElement; combo: HTMLElement; list: HTMLElement; none: HTMLElement } | null = null;
+  private readonly tickets = new Map<number, HTMLDivElement>();
   private readonly rush: HTMLDivElement;
 
   constructor(parent: HTMLElement) {
@@ -102,26 +103,54 @@ export class Hud {
     this.rush.style.display = on ? '' : 'none';
   }
 
-  /** Time-attack clock, score/combo and the order tickets. */
-  setRush(left: number, score: number, combo: number, orders: Array<{ recipe: RecipeId; left: number; got: boolean }>): void {
+  /**
+   * Time-attack clock, score/combo and the order tickets. Elements persist and
+   * are patched in place, so tickets only animate in once (no re-render blink).
+   */
+  setRush(left: number, score: number, combo: number, orders: Array<{ id: number; recipe: RecipeId; left: number; got: boolean }>): void {
+    if (!this.rushUi) {
+      this.rush.innerHTML = `<div class="rush-top paper"><div class="timer"></div><div class="score"><small>${t('rush.score')}</small><span></span></div><div class="combo"></div></div>
+        <div class="tickets"><h4>${t('rush.orders')}</h4><div class="none">${t('rush.none')}</div></div>`;
+      this.rushUi = {
+        timer: this.rush.querySelector('.timer')!,
+        score: this.rush.querySelector('.score span')!,
+        combo: this.rush.querySelector('.combo')!,
+        list: this.rush.querySelector('.tickets')!,
+        none: this.rush.querySelector('.tickets .none')!,
+      };
+    }
+    const ui = this.rushUi;
     const secs = Math.max(0, Math.ceil(left));
-    const key = `${secs}|${score}|${combo}|${orders.map((o) => `${o.recipe}${Math.round(o.left * 20)}${o.got ? 1 : 0}`).join(',')}`;
-    if (key === this.lastRush) return;
-    this.lastRush = key;
-    const mm = Math.floor(secs / 60);
-    const ss = String(secs % 60).padStart(2, '0');
-    const tickets = orders.length
-      ? orders
-          .slice(0, 6)
-          .map((o) => {
-            const tone = o.left > 0.5 ? 'ok' : o.left > 0.25 ? 'warn' : 'late';
-            return `<div class="ticket ${tone}${o.got ? ' got' : ''}"><span class="ico">${RECIPES[o.recipe].icon}</span><span class="nm">${t(`recipe.${o.recipe}` as StringKey)}</span><i style="width:${Math.round(o.left * 100)}%"></i></div>`;
-          })
-          .join('')
-      : `<div class="none">${t('rush.none')}</div>`;
-    this.rush.innerHTML = `<div class="rush-top paper"><div class="timer ${secs <= 30 ? 'hurry' : ''}">${mm}:${ss}</div>
-      <div class="score"><small>${t('rush.score')}</small>${won(score)}</div>${combo > 1 ? `<div class="combo">${t('rush.combo', { n: combo })}</div>` : ''}</div>
-      <div class="tickets"><h4>${t('rush.orders')}</h4>${tickets}</div>`;
+    const clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+    if (ui.timer.textContent !== clock) ui.timer.textContent = clock;
+    ui.timer.classList.toggle('hurry', secs <= 30);
+    const sc = won(score);
+    if (ui.score.textContent !== sc) ui.score.textContent = sc;
+    const cb = combo > 1 ? t('rush.combo', { n: combo }) : '';
+    if (ui.combo.textContent !== cb) ui.combo.textContent = cb;
+    ui.combo.style.display = cb ? '' : 'none';
+
+    const shown = orders.slice(0, 6);
+    const alive = new Set(shown.map((o) => o.id));
+    for (const [id, e] of this.tickets) {
+      if (!alive.has(id)) {
+        e.remove();
+        this.tickets.delete(id);
+      }
+    }
+    for (const o of shown) {
+      let e = this.tickets.get(o.id);
+      if (!e) {
+        e = el('div', 'ticket', ui.list);
+        e.innerHTML = `<span class="ico">${RECIPES[o.recipe].icon}</span><span class="nm">${t(`recipe.${o.recipe}` as StringKey)}</span><i></i>`;
+        this.tickets.set(o.id, e);
+      }
+      const tone = o.left > 0.5 ? 'ok' : o.left > 0.25 ? 'warn' : 'late';
+      for (const c of ['ok', 'warn', 'late']) e.classList.toggle(c, c === tone);
+      e.classList.toggle('got', o.got);
+      (e.lastElementChild as HTMLElement).style.width = `${(o.left * 100).toFixed(1)}%`;
+    }
+    ui.none.style.display = shown.length ? 'none' : '';
   }
 
   toast(text: string, tone: 'good' | 'bad' | 'info' | 'money' = 'info'): void {
