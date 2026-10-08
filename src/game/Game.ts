@@ -19,17 +19,19 @@ import { Hud } from '../ui/Hud';
 import { Menus } from '../ui/Menus';
 import { VfxSystem } from '../systems/Vfx';
 import { AudioSystem } from '../systems/AudioSystem';
-import { GameState, DAY_LENGTH_SECONDS, DEFAULT_SETTINGS, type Settings, type SaveData } from './State';
+import { GameState, DAY_LENGTH_SECONDS, DEFAULT_SETTINGS, RUSH_SECONDS, type Settings, type SaveData } from './State';
+import { RECIPES, RECIPE_ORDER, type RecipeId } from './Recipes';
 import { BinStation, DisplayBasket, MixerStation, OvenStation, PantryItem, ProoferStation, WorkbenchStation, type Ctx, type Station } from './Stations';
 import { CustomerManager } from './Customers';
 import { BenchTools } from './Tactile';
-import { setLang, t } from '../ui/i18n';
+import { setLang, t, won } from '../ui/i18n';
 import { Tray } from './Items';
 import { Bread } from './Bread';
 
 const SAVE_KEY = 'hearth-crumb-save';
 const SETTINGS_KEY = 'hearth-crumb-settings';
 const AUTOSTART_KEY = 'hearth-crumb-autostart';
+const RUSH_BEST_KEY = 'hearth-crumb-rush-best';
 
 type Mode = 'title' | 'play' | 'ledger';
 
@@ -78,6 +80,8 @@ export class Game {
   private started = false;
   private musicIndex = 0;
   private timers: Array<{ at: number; fn: () => void }> = [];
+  private rushLeft = 0;
+  private rushWarned = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.settings = loadSettings();
@@ -170,8 +174,9 @@ export class Game {
     this.interaction.register({
       id: 'open-sign',
       roots: [this.world.openSign],
-      prompt: () => (this.state.phase === 'prep' ? t('sign.open') : this.state.phase === 'open' ? t('sign.close') : t('sign.closed')),
+      prompt: () => (this.state.rush ? null : this.state.phase === 'prep' ? t('sign.open') : this.state.phase === 'open' ? t('sign.close') : t('sign.closed')),
       interact: () => {
+        if (this.state.rush) return;
         if (this.state.phase === 'prep') this.setShopOpen(true);
         else if (this.state.phase === 'open') this.setShopOpen(false);
       },
@@ -182,6 +187,9 @@ export class Game {
     this.events.on('stamp', (e) => e.grade === 'perfect' && unlock('FIRST_PERFECT'));
     this.events.on('sold', () => unlock('FIRST_SALE'));
     this.events.on('dayEnd', () => unlock('FIRST_DAY'));
+    this.events.on('rushServe', (e) => {
+      if (e.combo > 1) this.hud.toast(t('rush.combo.toast', { n: e.combo, gain: won(e.gain) }), 'good');
+    });
 
     // Merge static dressing; keep interactive / animated subtrees live.
     const batch = batchStatic(this.world.group, [
@@ -221,6 +229,7 @@ export class Game {
         onQuit: () => this.quit(),
         onSettings: (s) => this.applySettings(s),
         onNextDay: () => this.nextDay(),
+        onRush: () => this.rushFromMenu(),
         onSound: (id) => this.audio.play(id, 0.6),
       },
       this.settings,
@@ -250,6 +259,7 @@ export class Game {
     const auto = sessionStorage.getItem(AUTOSTART_KEY);
     sessionStorage.removeItem(AUTOSTART_KEY);
     if (auto === 'new') this.startPlay(null);
+    else if (auto === 'rush') this.startRush();
     else {
       this.menus.showTitle(true);
       this.audio.playMusic('music_menu');
@@ -299,6 +309,57 @@ export class Game {
     setTimeout(() => this.hud.fadeControlsHint(), 14000);
   }
 
+  private rushFromMenu(): void {
+    if (this.started) {
+      sessionStorage.setItem(AUTOSTART_KEY, 'rush');
+      location.reload();
+      return;
+    }
+    this.startRush();
+  }
+
+  /** Time attack: shop open from the first second, every guest orders a bread. */
+  private startRush(): void {
+    this.state.rush = true;
+    this.startPlay(null);
+    this.state.phase = 'open';
+    this.world.shopSignArt.set(true);
+    this.rushLeft = RUSH_SECONDS;
+    this.rushWarned = false;
+    this.customers.startRush();
+    // A head start: one basket of morning rolls already out.
+    this.stockBasket(0, 'roll', 6);
+    this.hud.setRushMode(true);
+    this.events.emit('toast', { text: t('rush.go'), tone: 'good' });
+  }
+
+  private endRush(): void {
+    this.mode = 'ledger';
+    this.input.exitLock();
+    this.hud.show(false);
+    this.minigames.cancel();
+    this.player.exitView();
+    this.busy = false;
+    this.audio.play('day_end');
+    const c = this.customers;
+    let best = 0;
+    try {
+      best = Number(localStorage.getItem(RUSH_BEST_KEY) ?? 0) || 0;
+    } catch {
+      // storage unavailable
+    }
+    const newBest = c.rushScore > best;
+    if (newBest) {
+      best = c.rushScore;
+      try {
+        localStorage.setItem(RUSH_BEST_KEY, String(best));
+      } catch {
+        // storage unavailable
+      }
+    }
+    this.menus.showRushResult({ score: c.rushScore, served: c.served, missed: c.missed, bestCombo: c.bestCombo, best, newBest });
+  }
+
   private nextMusic(): void {
     const evening = this.state.dayProgress > 0.75;
     const ids = evening ? ['music_evening'] : ['music_day_1', 'music_day_2'];
@@ -331,7 +392,7 @@ export class Game {
   }
 
   private save(): void {
-    if (!this.started) return;
+    if (!this.started || this.state.rush) return;
     localStorage.setItem(SAVE_KEY, JSON.stringify(this.state.toSave()));
   }
 
@@ -416,14 +477,30 @@ export class Game {
     if (this.playing) {
       this.elapsed += dt;
       const s = this.state;
-      if (s.phase === 'open') s.dayTime += dt;
-      if (s.open && s.dayTime >= DAY_LENGTH_SECONDS) {
-        this.setShopOpen(false);
-      } else if (s.open && !this.closingWarned && s.dayTime >= DAY_LENGTH_SECONDS * 0.92) {
-        this.closingWarned = true;
-        this.events.emit('toast', { text: t('toast.closing'), tone: 'info' });
+      if (s.rush) {
+        // The sun races from morning to dusk over the run.
+        this.rushLeft -= dt;
+        s.dayTime = (1 - Math.max(0, this.rushLeft) / RUSH_SECONDS) * DAY_LENGTH_SECONDS;
+        this.customers.rushProgress = 1 - this.rushLeft / RUSH_SECONDS;
+        if (!this.rushWarned && this.rushLeft <= 30) {
+          this.rushWarned = true;
+          this.events.emit('toast', { text: t('rush.30'), tone: 'bad' });
+          this.audio.play('timer_ding', 0.7);
+        }
+        if (this.rushLeft <= 0) {
+          this.endRush();
+          return;
+        }
+      } else {
+        if (s.phase === 'open') s.dayTime += dt;
+        if (s.open && s.dayTime >= DAY_LENGTH_SECONDS) {
+          this.setShopOpen(false);
+        } else if (s.open && !this.closingWarned && s.dayTime >= DAY_LENGTH_SECONDS * 0.92) {
+          this.closingWarned = true;
+          this.events.emit('toast', { text: t('toast.closing'), tone: 'info' });
+        }
+        if (s.phase === 'closed' && this.customers.customers.length === 0) this.endDay();
       }
-      if (s.phase === 'closed' && this.customers.customers.length === 0) this.endDay();
 
       const canAct = !this.busy && (input.locked || this.testMode);
       this.player.update(dt, input, canAct);
@@ -480,10 +557,25 @@ export class Game {
       for (const st of this.stations) st.labels();
       this.hud.endLabels();
       this.hud.setStatus(this.state.day, this.state.clockLabel(), this.state.money, this.state.reputation, this.state.phase, this.state.dayProgress);
-      this.hud.setRecipe(t('recipe.roll'), this.recipeStep());
+      this.hud.setRecipe(this.currentRecipe(), this.recipeStep());
+      if (this.state.rush) this.hud.setRush(this.rushLeft, this.customers.rushScore, this.customers.combo, this.customers.orders());
     }
     input.consumeFrame();
     this.publishDiagnostics();
+  }
+
+  /** Recipe of whatever batch the baker is working on right now. */
+  private currentRecipe(): RecipeId {
+    const held = this.interaction.held;
+    if (held?.kind === 'tray') return held.tray.recipe;
+    if (held?.kind === 'dough') return held.bread.recipe;
+    const benchTray = this.bench.trayOnBench;
+    if (benchTray) return benchTray.recipe;
+    if (this.bench.doughOnBench) return this.bench.doughOnBench.recipe;
+    if (this.mixer.phase !== 'idle') return this.mixer.recipe;
+    if (this.proofer.tray) return this.proofer.tray.recipe;
+    if (this.oven.tray) return this.oven.tray.recipe;
+    return this.mixer.recipe;
   }
 
   /** Which recipe-card step the baker is on, derived from world state. */
@@ -578,6 +670,14 @@ export class Game {
           this.menus.showTitle(true);
           return { state: name };
         }
+        if (name === 'rush') {
+          if (this.mode !== 'play') this.startRush();
+          this.menus.hideAll();
+          this.placeView(views.kitchen);
+          this.update(0);
+          this.render();
+          return { state: name };
+        }
         if (this.mode !== 'play') this.startPlay(null);
         this.menus.hideAll();
         this.paused = false;
@@ -604,6 +704,21 @@ export class Game {
           this.player.spawn(new THREE.Vector3(at.x + 0.3, 0, at.z + 0.62), 0, -0.9);
           this.player.update(0, this.input, false);
           this.player.enterView(new THREE.Vector3(at.x + 0.3, at.y + 0.42, at.z + 0.42), new THREE.Vector3(at.x + 0.3, at.y + 0.04, at.z));
+        } else if (name === 'bread-variety') {
+          const at = this.world.anchors.workbench.position;
+          RECIPE_ORDER.forEach((r, i) => {
+            const b = new Bread(this.breads, r, i * 0.7 + 0.2, r === 'roll' ? 'roll' : r);
+            b.proof = 1;
+            b.glaze = RECIPES[r].glaze ? 1 : 0;
+            b.bake = 1.0;
+            b.apply();
+            b.mesh.position.set(at.x - 0.25 + i * 0.2, at.y + 0.01, at.z + (i % 2) * 0.06);
+            b.mesh.rotation.y = r === 'baguette' ? 0.9 : 0.3;
+            this.scene.add(b.mesh);
+          });
+          this.player.spawn(new THREE.Vector3(at.x + 0.05, 0, at.z + 0.62), 0, -0.9);
+          this.player.update(0, this.input, false);
+          this.player.enterView(new THREE.Vector3(at.x + 0.05, at.y + 0.45, at.z + 0.48), new THREE.Vector3(at.x + 0.05, at.y + 0.04, at.z));
         } else if (name === 'baking-start') {
           this.stageBaking(0);
           this.placeView(views.oven);
@@ -701,22 +816,27 @@ export class Game {
     this.oven.interact({ kind: 'tray', tray });
   }
 
-  private stageShop(): void {
-    for (const [i, basket] of this.baskets.entries()) {
-      if (basket.items.length || i > 2) continue;
-      const tray = new Tray(this.kit);
-      for (let j = 0; j < 6; j++) {
-        const b = new Bread(this.breads, 'roll', i * 3 + j * 0.37);
-        b.proof = 1;
-        b.glaze = 1;
-        b.bake = 0.97 + (j % 3) * 0.03;
-        b.apply();
-        tray.add(b);
-      }
-      tray.baked = true;
-      tray.craft = 0.9;
-      basket.interact({ kind: 'tray', tray });
+  /** Put finished bread straight into a display basket (staging / time-attack head start). */
+  private stockBasket(index: number, recipe: RecipeId, count: number): void {
+    const basket = this.baskets[index];
+    if (!basket || basket.items.length) return;
+    const tray = new Tray(this.kit);
+    tray.setRecipe(recipe);
+    for (let j = 0; j < Math.min(count, tray.slots.length); j++) {
+      const b = new Bread(this.breads, recipe, index * 3 + j * 0.37, recipe === 'roll' ? 'roll' : recipe);
+      b.proof = 1;
+      b.glaze = RECIPES[recipe].glaze ? 1 : 0;
+      b.bake = 0.97 + (j % 3) * 0.03;
+      b.apply();
+      tray.add(b);
     }
+    tray.baked = true;
+    tray.craft = 0.9;
+    basket.interact({ kind: 'tray', tray });
+  }
+
+  private stageShop(): void {
+    RECIPE_ORDER.forEach((r, i) => this.stockBasket(i, r, RECIPES[r].pieces));
     for (let i = 0; i < 40 && this.customers.customers.length < 4; i++) this.customers.update(4);
     for (let i = 0; i < 300; i++) this.customers.update(1 / 30);
   }

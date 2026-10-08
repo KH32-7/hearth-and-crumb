@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import type { Ctx } from './Stations';
 import type { DisplayBasket } from './Stations';
-import { PRICES } from './State';
+import { RECIPES, RECIPE_ORDER } from './Recipes';
 import { t, won } from '../ui/i18n';
 import type { RecipeId } from './Bread';
 import { batchStatic } from '../render/StaticBatcher';
@@ -36,6 +36,8 @@ export class Customer {
   basket: DisplayBasket | null = null;
   bought: { recipe: RecipeId; quality: number } | null = null;
   queueIndex = -1;
+  /** Seconds since entering (time-attack patience runs over the whole visit). */
+  visit = 0;
   private readonly legs: THREE.Object3D[] = [];
   private readonly arms: THREE.Object3D[] = [];
   private readonly body: THREE.Object3D;
@@ -195,6 +197,13 @@ export class CustomerManager {
   // The player opens the shop when ready; the first guest follows shortly after.
   private spawnTimer = 8;
   private readonly bubbles: Record<string, THREE.Texture>;
+  // Time attack: every guest orders one specific bread.
+  rushProgress = 0;
+  combo = 0;
+  bestCombo = 0;
+  served = 0;
+  missed = 0;
+  rushScore = 0;
 
   constructor(
     private readonly ctx: Ctx,
@@ -208,6 +217,7 @@ export class CustomerManager {
       sad: bubbleTexture('…', '#6b4a3a'),
       hurry: bubbleTexture('!', '#b5553a'),
     };
+    for (const id of RECIPE_ORDER) this.bubbles[`want_${id}`] = bubbleTexture(RECIPES[id].icon, '#e9b95c');
   }
 
   get queue(): Customer[] {
@@ -223,11 +233,24 @@ export class CustomerManager {
     const front = this.queue[0];
     if (!front || !front.bought) return;
     const ctx = this.ctx;
-    const price = PRICES[front.bought.recipe];
+    const price = RECIPES[front.bought.recipe].price;
     const q = front.bought.quality;
     const paid = Math.round((price * (0.6 + 0.4 * q)) / 10) * 10;
-    const patienceLeft = Math.max(0, 1 - front.wait / front.patience);
-    const tip = q > 0.8 && patienceLeft > 0.4 ? Math.round((price * 0.2 * q * patienceLeft) / 10) * 10 : 0;
+    const rush = ctx.state.rush;
+    const patienceLeft = Math.max(0, 1 - (rush ? front.visit : front.wait) / front.patience);
+    // In time attack, speed is what earns the tip.
+    const tip = rush
+      ? patienceLeft > 0.25 ? Math.round((price * 0.5 * patienceLeft) / 10) * 10 : 0
+      : q > 0.8 && patienceLeft > 0.4 ? Math.round((price * 0.2 * q * patienceLeft) / 10) * 10 : 0;
+    if (rush) {
+      this.combo += 1;
+      this.bestCombo = Math.max(this.bestCombo, this.combo);
+      this.served += 1;
+      const mult = 1 + Math.min(this.combo - 1, 10) * 0.1;
+      const gain = Math.round(((paid + tip) * mult) / 10) * 10;
+      this.rushScore += gain;
+      ctx.events.emit('rushServe', { gain, combo: this.combo });
+    }
     ctx.state.money += paid + tip;
     ctx.state.stats.sold += 1;
     ctx.state.stats.revenue += paid;
@@ -257,14 +280,22 @@ export class CustomerManager {
     if (state.open) {
       this.spawnTimer -= dt;
       const crowd = this.customers.filter((c) => c.phase !== 'gone').length;
-      if (this.spawnTimer <= 0 && crowd < 5) {
+      if (this.spawnTimer <= 0 && crowd < (state.rush ? 6 : 5)) {
         this.spawn();
-        const base = 34 - state.reputation * 3.2;
+        const base = state.rush ? THREE.MathUtils.lerp(16, 8, this.rushProgress) : 34 - state.reputation * 3.2;
         this.spawnTimer = base * (0.7 + ctx.rng() * 0.6);
       }
     }
     for (const c of this.customers) {
       c.wait += dt;
+      if (c.phase !== 'paid' && c.phase !== 'leave' && c.phase !== 'gone') c.visit += dt;
+      if (state.rush && c.want && c.visit > c.patience && (c.phase === 'enter' || c.phase === 'browse' || c.phase === 'toQueue' || c.phase === 'queue')) {
+        const queued = c.phase === 'queue' || c.phase === 'toQueue';
+        this.leaveSad(c);
+        if (queued) this.reindexQueue();
+        c.update(dt, null);
+        continue;
+      }
       let face: THREE.Vector3 | null = null;
       switch (c.phase) {
         case 'enter':
@@ -272,9 +303,9 @@ export class CustomerManager {
           break;
         case 'browse':
           face = c.basket ? c.basket.position : null;
-          c.showBubble('think');
-          if (c.arrived && c.wait > 2.2) {
-            const got = c.basket?.takeOne();
+          c.showBubble(c.want ? (c.visit / c.patience > 0.7 ? 'hurry' : `want_${c.want}`) : 'think');
+          if (c.arrived && c.wait > (c.want ? 1.2 : 2.2)) {
+            const got = !c.want || c.basket?.recipe === c.want ? c.basket?.takeOne() : null;
             if (got) {
               c.bought = { recipe: got.recipe, quality: got.quality };
               c.showBubble('bread');
@@ -283,7 +314,7 @@ export class CustomerManager {
               c.wait = 0;
               c.queueIndex = this.nextQueueIndex();
               c.walkTo(this.queuePath(c));
-            } else if (c.wait > 24) {
+            } else if (!c.want && c.wait > 24) {
               this.leaveSad(c);
             } else this.chooseBasket(c);
           }
@@ -296,9 +327,9 @@ export class CustomerManager {
           break;
         case 'queue': {
           face = a.register.position;
-          const frac = c.wait / c.patience;
+          const frac = c.want ? c.visit / c.patience : c.wait / c.patience;
           c.showBubble(frac > 0.7 ? 'hurry' : 'coin');
-          if (c.wait > c.patience) {
+          if (!c.want && c.wait > c.patience) {
             // Gives up but leaves the bread back? Keep it simple: walks out unhappy without paying.
             this.leaveSad(c);
             this.reindexQueue();
@@ -336,6 +367,12 @@ export class CustomerManager {
     const ctx = this.ctx;
     const a = ctx.world.anchors;
     const c = new Customer(ctx, ctx.rng(), this.bubbles);
+    if (ctx.state.rush) {
+      // Rolls are the everyday order; the fancier breads come up less often.
+      const r = ctx.rng();
+      c.want = r < 0.34 ? 'roll' : r < 0.56 ? 'baguette' : r < 0.78 ? 'croissant' : 'pretzel';
+      c.patience = 72 + ctx.rng() * 22;
+    }
     c.group.position.copy(a.shopDoor).add(new THREE.Vector3(0, 0, 1.6));
     c.walkTo([a.shopDoor.clone().add(new THREE.Vector3(0, 0, -0.2)), new THREE.Vector3(a.shopDoor.x - 0.4, 0, 3.0)]);
     ctx.scene.add(c.group);
@@ -344,7 +381,20 @@ export class CustomerManager {
   }
 
   private chooseBasket(c: Customer): void {
-    const stocked = this.baskets.filter((b) => b.items.length > 0);
+    const stocked = this.baskets.filter((b) => b.items.length > 0 && (!c.want || b.recipe === c.want));
+    if (c.want && !stocked.length) {
+      // Nothing they want yet: wait by the counter, looking hopeful.
+      if (c.phase !== 'browse' || !c.basket) {
+        // Spread the waiting guests out so they don't stand inside each other.
+        const waiting = this.customers.filter((o) => o !== c && o.want && o.phase === 'browse').length;
+        const pick = this.baskets[(waiting + Math.floor(this.ctx.rng() * 2)) % this.baskets.length];
+        c.basket = pick;
+        c.walkTo([new THREE.Vector3(pick.position.x + (this.ctx.rng() - 0.5) * 0.25, 0, 1.45 + (waiting % 3) * 0.38)]);
+        c.phase = 'browse';
+      }
+      c.wait = 0;
+      return;
+    }
     const pick = stocked.length ? stocked[Math.floor(this.ctx.rng() * stocked.length)] : this.baskets[Math.floor(this.ctx.rng() * this.baskets.length)];
     if (c.basket !== pick || c.phase !== 'browse') {
       c.basket = pick;
@@ -363,6 +413,10 @@ export class CustomerManager {
     c.showBubble('sad');
     c.walkTo([new THREE.Vector3(ctx.world.anchors.shopDoor.x, 0, 3.4), ctx.world.anchors.shopDoor.clone().add(new THREE.Vector3(0, 0, 1.5))]);
     ctx.state.stats.sad += 1;
+    if (ctx.state.rush) {
+      this.combo = 0;
+      this.missed += 1;
+    }
     ctx.state.reputation = Math.max(0.5, ctx.state.reputation - 0.1);
     ctx.events.emit('toast', { text: t('toast.left'), tone: 'bad' });
   }
@@ -387,6 +441,19 @@ export class CustomerManager {
     for (const c of this.customers) c.group.removeFromParent();
     this.customers.length = 0;
     this.spawnTimer = 8;
+  }
+
+  startRush(): void {
+    this.clear();
+    this.spawnTimer = 3;
+    this.combo = this.bestCombo = this.served = this.missed = this.rushScore = 0;
+  }
+
+  /** Open time-attack orders for the HUD tickets (oldest first). */
+  orders(): Array<{ recipe: RecipeId; left: number; got: boolean }> {
+    return this.customers
+      .filter((c) => c.want && (c.phase === 'enter' || c.phase === 'browse' || c.phase === 'toQueue' || c.phase === 'queue'))
+      .map((c) => ({ recipe: c.want!, left: Math.max(0, 1 - c.visit / c.patience), got: !!c.bought }));
   }
 }
 

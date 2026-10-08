@@ -10,6 +10,7 @@ export type GameEvents = {
   baked: { quality: number; count: number };
   dayEnd: Record<string, never>;
   tutorial: { step: string };
+  rushServe: { gain: number; combo: number };
 };
 
 type Handler<T> = (payload: T) => void;

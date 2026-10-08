@@ -1,18 +1,32 @@
-// Scripted bot that plays one full morning-roll day through the real
-// interaction paths (raycast hover → click) and drives the hand / knife /
-// brush tools with a synthetic cursor. Dev only (uses window.__game).
-//   const m = await import('/tests/bot/botplay.js'); await m.run({ until: 'sold' })
+// Scripted bot that plays one full batch through the real interaction paths
+// (raycast hover → click) and drives the hand / knife / brush tools with a
+// synthetic cursor. Dev only (uses window.__game).
+//   const m = await import('/tests/bot/botplay.js');
+//   await m.run({ recipe: 'croissant', until: 'sold' })
+//   await m.run({ state: 'rush', recipe: 'pretzel', until: 'sold' })
+const ORDER = ['roll', 'baguette', 'croissant', 'pretzel'];
+const DEF = {
+  roll: { pieces: 6, grams: 60, shape: 'round', score: true, glaze: true, bake: 22 },
+  baguette: { pieces: 3, grams: 120, shape: 'log', score: true, glaze: false, bake: 26 },
+  croissant: { pieces: 4, grams: 70, shape: 'croissant', score: false, glaze: true, bake: 20 },
+  pretzel: { pieces: 4, grams: 70, shape: 'pretzel', score: false, glaze: true, bake: 20 },
+};
+
 export async function run(opts = {}) {
   const H = window.__THREE_GAME_TEST_HOOKS__;
   const G = window.__game;
   const D = () => window.__THREE_GAME_DIAGNOSTICS__.game;
   const log = [];
+  const recipe = opts.recipe ?? 'roll';
+  const def = DEF[recipe];
+  const rush = opts.state === 'rush';
   const step = (s = 0.1) => H.skipTime(s);
   const frames = (n) => {
     for (let i = 0; i < n; i++) H.skipTime(1 / 30);
   };
+  const act = () => G.minigames.active;
   const until = opts.until ?? 'sold';
-  if (!opts.noReset) await H.setState('kitchen');
+  if (!opts.noReset) await H.setState(opts.state ?? 'kitchen');
   const A = H.anchors();
   const use = (pos, target, label, right = false) => {
     H.teleport(pos[0], pos[1]);
@@ -27,8 +41,21 @@ export async function run(opts = {}) {
   };
   const scr = (v) => H.project(v.x ?? v[0], v.y ?? v[1], v.z ?? v[2]);
   const mg = () => D().minigame;
+  const lerp2 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+  const drag = (a, b, n) => {
+    for (let i = 1; i <= n; i++) {
+      H.cursor(...lerp2(a, b, i / n));
+      frames(1);
+    }
+  };
+  const key = (code) => {
+    H.key(code, true);
+    frames(1);
+    H.key(code, false);
+    frames(1);
+  };
 
-  // Ingredients + mixer
+  // Ingredients + recipe pick + mixer
   const mixer = A.mixer;
   const mixAim = [mixer[0], mixer[1] + 0.15, mixer[2] + 0.08];
   for (const k of ['flour', 'water', 'yeast', 'butter']) {
@@ -37,6 +64,10 @@ export async function run(opts = {}) {
     use([mixer[0] + 0.3, -2.9], mixAim, `add ${k}`);
   }
   use([mixer[0] + 0.3, -2.9], mixAim, 'start mix');
+  frames(4);
+  log.push(`picker=${document.querySelector('.mg h2')?.textContent}`);
+  key(`Digit${ORDER.indexOf(recipe) + 1}`);
+  frames(6);
   H.hold(true);
   step(1.75);
   H.hold(false);
@@ -56,14 +87,8 @@ export async function run(opts = {}) {
     H.cursor(near[0], near[1]);
     frames(1);
     H.hold(true);
-    for (let i = 1; i <= 8; i++) {
-      H.cursor(near[0] + (far[0] - near[0]) * (i / 8), near[1] + (far[1] - near[1]) * (i / 8));
-      frames(1);
-    }
-    for (let i = 7; i >= 0; i--) {
-      H.cursor(near[0] + (far[0] - near[0]) * (i / 8), near[1] + (far[1] - near[1]) * (i / 8));
-      frames(1);
-    }
+    drag(near, far, 8);
+    drag(far, near, 8);
     H.hold(false);
     frames(2);
   }
@@ -71,21 +96,17 @@ export async function run(opts = {}) {
   frames(30);
   if (until === 'knead') return log;
 
-  // 2) Pull: pinch ~1 s for 60 g, drag toward the tray to tear, drop.
+  // 2) Pull: pinch long enough for the target weight, drag toward the tray to tear, drop.
   const trayPos = G.bench.tray.group.position.clone();
-  for (let piece = 0; piece < 6; piece++) {
+  const pinch = Math.max(8, Math.round((Math.log(def.grams / 69 + 1) / 0.55) * 30) - 9);
+  for (let piece = 0; piece < def.pieces; piece++) {
     const dpos = G.bench.dough ? G.bench.dough.mesh.position : dough;
-    const toward = { x: dpos.x + 0.12, y: dpos.y, z: dpos.z };
-    const start = scr(toward);
+    const start = scr({ x: dpos.x + 0.12, y: dpos.y, z: dpos.z });
     H.cursor(start[0], start[1]);
     frames(1);
     H.hold(true);
-    frames(28); // ~0.93 s pinch
-    const end = scr({ x: trayPos.x, y: trayPos.y, z: trayPos.z });
-    for (let i = 1; i <= 10; i++) {
-      H.cursor(start[0] + (end[0] - start[0]) * (i / 10), start[1] + (end[1] - start[1]) * (i / 10));
-      frames(1);
-    }
+    frames(pinch);
+    drag(start, scr({ x: trayPos.x, y: trayPos.y, z: trayPos.z }), 10);
     H.hold(false);
     frames(14);
   }
@@ -93,14 +114,67 @@ export async function run(opts = {}) {
   frames(30);
   if (until === 'pull') return log;
 
-  // 3) Round: circle each piece.
-  for (const s of H.benchTraySlots()) {
-    const [cx, cy] = H.project(s[0], s[1] + 0.03, s[2]);
-    for (let a = 0; a <= Math.PI * 4.8; a += 0.35) {
-      H.cursor(cx + Math.cos(a) * 55, cy + Math.sin(a) * 55);
-      frames(1);
+  // 3) Shape each piece by hand.
+  const slots = H.benchTraySlots();
+  if (def.shape === 'round') {
+    for (const s of slots) {
+      const [cx, cy] = H.project(s[0], s[1] + 0.03, s[2]);
+      for (let a = 0; a <= Math.PI * 4.8; a += 0.35) {
+        H.cursor(cx + Math.cos(a) * 55, cy + Math.sin(a) * 55);
+        frames(1);
+      }
+      frames(3);
     }
-    frames(3);
+  } else if (def.shape === 'log' || def.shape === 'pretzel') {
+    for (let i = 0; i < slots.length; i++) {
+      frames(12); // camera glides to the piece
+      const s = slots[i];
+      const a = H.project(s[0], s[1] + 0.03, s[2] - 0.06);
+      const c = H.project(s[0], s[1] + 0.03, s[2] + 0.06);
+      H.cursor(a[0], a[1]);
+      frames(1);
+      H.hold(true);
+      for (let k = 0; k < 40 && act()?.index === i && act()?.stage === 'roll'; k++) {
+        drag(a, c, 4);
+        drag(c, a, 4);
+      }
+      H.hold(false);
+      frames(3);
+      if (def.shape === 'pretzel') {
+        const [cx, cy] = H.project(s[0], s[1] + 0.02, s[2]);
+        for (let a2 = 0; a2 <= Math.PI * 8 && act()?.index === i; a2 += 0.3) {
+          H.cursor(cx + Math.cos(a2) * 70, cy + Math.sin(a2) * 70);
+          frames(1);
+        }
+      }
+      log.push(`piece ${i} -> index=${act()?.index}`);
+    }
+  } else {
+    for (let i = 0; i < slots.length; i++) {
+      frames(12);
+      const s = slots[i];
+      const at = H.project(s[0], s[1] + 0.02, s[2]);
+      H.cursor(at[0], at[1]);
+      for (let k = 0; k < 2; k++) {
+        frames(2);
+        H.hold(true);
+        frames(2);
+        H.hold(false);
+        frames(4);
+      }
+      const back = H.project(s[0], s[1] + 0.02, s[2] + 0.07);
+      const front = H.project(s[0], s[1] + 0.02, s[2] - 0.08);
+      for (let k = 0; k < 12 && act()?.index === i && act()?.stage === 'roll'; k++) {
+        H.cursor(back[0], back[1]);
+        frames(1);
+        H.hold(true);
+        drag(back, front, 8);
+        H.hold(false);
+        frames(1);
+      }
+      frames(18);
+      log.push(`croissant ${i} -> index=${act()?.index}`);
+    }
   }
   frames(40);
   log.push(`shaped bench=${D().bench}`);
@@ -109,7 +183,7 @@ export async function run(opts = {}) {
   use([b[0] + 0.1, -0.8], [b[0], b[1], b[2]], 'take tray');
   const pr = A.proofer;
   use([pr[0] + 0.9, -2.7], [pr[0], 1.1, pr[2] + 0.2], 'proofer in');
-  step(17);
+  step(rush ? 11 : 17);
   log.push(`proof=${D().proofer?.toFixed(2)}`);
   use([pr[0] + 0.9, -2.7], [pr[0], 1.1, pr[2] + 0.2], 'proofer out');
   use([b[0] + 0.1, -0.8], [b[0], b[1], b[2]], 'tray on bench');
@@ -117,74 +191,87 @@ export async function run(opts = {}) {
   frames(25);
   if (until === 'finish-start') return log;
 
-  // 4) Score: one swipe across each bun, then a second crossing swipe.
-  const slots = H.benchTraySlots();
-  for (const dir of [0, 1]) {
-    for (const s of slots) {
-      const a = dir ? H.project(s[0], s[1] + 0.05, s[2] - 0.045) : H.project(s[0] - 0.045, s[1] + 0.05, s[2]);
-      const c = dir ? H.project(s[0], s[1] + 0.05, s[2] + 0.045) : H.project(s[0] + 0.045, s[1] + 0.05, s[2]);
-      H.cursor(a[0], a[1]);
-      frames(1);
-      H.hold(true);
-      for (let i = 1; i <= 8; i++) {
-        H.cursor(a[0] + (c[0] - a[0]) * (i / 8), a[1] + (c[1] - a[1]) * (i / 8));
+  const fslots = H.benchTraySlots();
+  if (def.score && recipe === 'baguette') {
+    // Four diagonal slashes down each loaf.
+    for (const s of fslots) {
+      for (const xo of [-0.14, -0.05, 0.04, 0.13]) {
+        const a = H.project(s[0] + xo - 0.035, s[1] + 0.05, s[2] - 0.028);
+        const c = H.project(s[0] + xo + 0.035, s[1] + 0.05, s[2] + 0.028);
+        H.cursor(a[0], a[1]);
         frames(1);
+        H.hold(true);
+        drag(a, c, 8);
+        H.hold(false);
+        frames(2);
+        if (!panelIs('칼집')) break;
       }
-      H.hold(false);
-      frames(2);
       if (!panelIs('칼집')) break;
     }
-    if (!panelIs('칼집')) break;
-  }
-  if (panelIs('칼집')) {
-    H.key('Space', true);
-    frames(1);
-    H.key('Space', false);
-  }
-  frames(35);
-  log.push(`scored; panel=${document.querySelector('.mg h2')?.textContent}`);
-
-  // 5) Glaze: scrub small circles over every bun.
-  H.hold(true);
-  for (let pass = 0; pass < 3 && panelIs('달걀물'); pass++) {
-    for (const s of slots) {
-      const [cx, cy] = H.project(s[0], s[1] + 0.05, s[2]);
-      for (let a = 0; a < Math.PI * 4; a += 0.5) {
-        H.cursor(cx + Math.cos(a) * 18, cy + Math.sin(a) * 12);
+    if (panelIs('칼집')) key('Space');
+    frames(35);
+  } else if (def.score) {
+    // Diagonal slashes along each piece, then crossing ones for buns.
+    for (const dir of [0, 1]) {
+      for (const s of fslots) {
+        const len = recipe === 'baguette' ? 0.17 : 0.045;
+        const a = dir ? H.project(s[0], s[1] + 0.05, s[2] - 0.045) : H.project(s[0] - len, s[1] + 0.05, s[2] - 0.012);
+        const c = dir ? H.project(s[0], s[1] + 0.05, s[2] + 0.045) : H.project(s[0] + len, s[1] + 0.05, s[2] + 0.012);
+        H.cursor(a[0], a[1]);
         frames(1);
+        H.hold(true);
+        drag(a, c, 10);
+        H.hold(false);
+        frames(2);
+        if (!panelIs('칼집')) break;
+      }
+      if (!panelIs('칼집')) break;
+    }
+    if (panelIs('칼집')) key('Space');
+    frames(35);
+    log.push(`scored; panel=${document.querySelector('.mg h2')?.textContent}`);
+  }
+  if (def.glaze) {
+    H.hold(true);
+    for (let pass = 0; pass < 3 && panelIs('달걀물'); pass++) {
+      for (const s of fslots) {
+        const [cx, cy] = H.project(s[0], s[1] + 0.05, s[2]);
+        for (let a = 0; a < Math.PI * 4; a += 0.5) {
+          H.cursor(cx + Math.cos(a) * 22, cy + Math.sin(a) * 14);
+          frames(1);
+        }
       }
     }
+    H.hold(false);
+    if (panelIs('달걀물')) key('Space');
+    frames(40);
   }
-  H.hold(false);
-  if (panelIs('달걀물')) {
-    H.key('Space', true);
-    frames(1);
-    H.key('Space', false);
-  }
-  frames(40);
   log.push(`finished bench=${D().bench}`);
   if (until === 'finish') return log;
 
   use([b[0] + 0.1, -0.8], [b[0], b[1], b[2]], 'take finished tray');
   const ov = A.oven;
   use([ov[0], -1.4], [ov[0], 1.0, ov[2] + 0.6], 'oven in');
-  step(opts.bakeSeconds ?? 22.5);
+  step(opts.bakeSeconds ?? def.bake / (rush ? 1.3 : 1));
   log.push(`bake=${D().oven?.toFixed(3)}`);
   if (until === 'bake') return log;
   use([ov[0], -1.4], [ov[0], 1.0, ov[2] + 0.6], 'oven out');
   step(2.6);
-  const bk = A.baskets[1];
+  const bk = A.baskets[ORDER.indexOf(recipe)];
   use([bk[0], -0.35], [bk[0], bk[1] + 0.05, bk[2]], 'display');
   if (until === 'display') return log;
-  // Open the shop by flipping the sign, then serve.
-  const sign = G.world.openSign.position;
-  use([sign.x, -0.35], [sign.x, sign.y + 0.29, sign.z], 'flip sign open');
+  if (!rush) {
+    const sign = G.world.openSign.position;
+    use([sign.x, -0.35], [sign.x, sign.y + 0.29, sign.z], 'flip sign open');
+  }
   const reg = A.register;
-  for (let tries = 0; tries < 40 && D().stats.sold < 2; tries++) {
+  const target = D().stats.sold + (opts.sell ?? 2);
+  for (let tries = 0; tries < 60 && D().stats.sold < target && D().mode === 'play'; tries++) {
     step(3);
     use([reg[0], -0.35], [reg[0], reg[1] + 0.25, reg[2]], 'serve');
   }
   log.push(`sold=${D().stats.sold} money=${D().money} rep=${D().reputation.toFixed(2)}`);
+  if (rush) log.push(`rush score=${G.customers.rushScore} combo=${G.customers.bestCombo} served=${G.customers.served} missed=${G.customers.missed}`);
   return log;
 }
 

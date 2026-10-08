@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import './hud.css';
 import { t, won, type StringKey } from './i18n';
+import { RECIPES, type RecipeId } from '../game/Recipes';
 
 export const RECIPE_STEPS: StringKey[] = ['step.ingredients', 'step.mix', 'step.shape', 'step.proof', 'step.finish', 'step.bake', 'step.display', 'step.sell'];
 
@@ -26,6 +27,8 @@ export class Hud {
   private readonly labelUsed = new Set<string>();
   private lastStatus = '';
   private lastRecipe = '';
+  private lastRush = '';
+  private readonly rush: HTMLDivElement;
 
   constructor(parent: HTMLElement) {
     this.root = el('div', 'hud hidden', parent);
@@ -38,6 +41,8 @@ export class Hud {
     this.status = el('div', 'status paper', this.root);
     this.recipe = el('div', 'recipe paper', this.root);
     this.toasts = el('div', 'toasts', this.root);
+    this.rush = el('div', 'rush-panel', this.root);
+    this.rush.style.display = 'none';
     this.vcursor = el('div', 'vcursor', this.root);
     this.controlsHint = el('div', 'controls-hint', this.root);
     this.controlsHint.textContent = t('controls.move');
@@ -83,12 +88,40 @@ export class Hud {
       <div class="open ${phase === 'open' ? '' : 'closed'}">● ${phase === 'open' ? t('hud.open') : phase === 'prep' ? t('hud.prep') : t('hud.closed')}</div>`;
   }
 
-  setRecipe(title: string, current: number): void {
-    const key = `${title}|${current}`;
+  setRecipe(recipe: RecipeId, current: number): void {
+    const key = `${recipe}|${current}`;
     if (key === this.lastRecipe) return;
     this.lastRecipe = key;
-    const items = RECIPE_STEPS.map((s, i) => `<li class="${i < current ? 'done' : i === current ? 'now' : ''}">${t(s)}</li>`).join('');
-    this.recipe.innerHTML = `<h3>${t('hud.recipe')} · ${title}</h3><ol>${items}</ol>`;
+    const step = (s: StringKey): StringKey => (recipe !== 'roll' && (s === 'step.shape' || s === 'step.finish') ? (`${s}.${recipe}` as StringKey) : s);
+    const items = RECIPE_STEPS.map((s, i) => `<li class="${i < current ? 'done' : i === current ? 'now' : ''}">${t(step(s))}</li>`).join('');
+    this.recipe.innerHTML = `<h3>${RECIPES[recipe].icon} ${t('hud.recipe')} · ${t(`recipe.${recipe}` as StringKey)}</h3><ol>${items}</ol>`;
+  }
+
+  setRushMode(on: boolean): void {
+    this.root.classList.toggle('rush', on);
+    this.rush.style.display = on ? '' : 'none';
+  }
+
+  /** Time-attack clock, score/combo and the order tickets. */
+  setRush(left: number, score: number, combo: number, orders: Array<{ recipe: RecipeId; left: number; got: boolean }>): void {
+    const secs = Math.max(0, Math.ceil(left));
+    const key = `${secs}|${score}|${combo}|${orders.map((o) => `${o.recipe}${Math.round(o.left * 20)}${o.got ? 1 : 0}`).join(',')}`;
+    if (key === this.lastRush) return;
+    this.lastRush = key;
+    const mm = Math.floor(secs / 60);
+    const ss = String(secs % 60).padStart(2, '0');
+    const tickets = orders.length
+      ? orders
+          .slice(0, 6)
+          .map((o) => {
+            const tone = o.left > 0.5 ? 'ok' : o.left > 0.25 ? 'warn' : 'late';
+            return `<div class="ticket ${tone}${o.got ? ' got' : ''}"><span class="ico">${RECIPES[o.recipe].icon}</span><span class="nm">${t(`recipe.${o.recipe}` as StringKey)}</span><i style="width:${Math.round(o.left * 100)}%"></i></div>`;
+          })
+          .join('')
+      : `<div class="none">${t('rush.none')}</div>`;
+    this.rush.innerHTML = `<div class="rush-top paper"><div class="timer ${secs <= 30 ? 'hurry' : ''}">${mm}:${ss}</div>
+      <div class="score"><small>${t('rush.score')}</small>${won(score)}</div>${combo > 1 ? `<div class="combo">${t('rush.combo', { n: combo })}</div>` : ''}</div>
+      <div class="tickets"><h4>${t('rush.orders')}</h4>${tickets}</div>`;
   }
 
   toast(text: string, tone: 'good' | 'bad' | 'info' | 'money' = 'info'): void {

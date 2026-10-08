@@ -17,6 +17,10 @@ export interface Minigame {
   readonly panelExtra?: HTMLElement;
   /** Tool-driven games show the tool itself instead of the cursor ring. */
   readonly hideCursor?: boolean;
+  /** Extra class on the panel (e.g. the wide recipe picker). */
+  readonly panelClass?: string;
+  /** No grade text / pause after finishing. */
+  readonly quiet?: boolean;
   /** Called when this game becomes active (set camera, tools). */
   enter?(): void;
   dispose?(): void;
@@ -77,7 +81,7 @@ export class MinigameHost {
       return;
     }
     const p = document.createElement('div');
-    p.className = 'mg paper';
+    p.className = `mg paper ${this.active.panelClass ?? ''}`;
     const h = document.createElement('h2');
     h.textContent = this.active.title;
     this.helpEl = document.createElement('p');
@@ -128,8 +132,11 @@ export class MinigameHost {
     if (done) {
       this.scores.push(this.active.score);
       this.active.dispose?.();
-      this.setResult(gradeText(this.active.score));
-      this.betweenTimer = 0.9;
+      if (this.active.quiet) this.betweenTimer = 0.05;
+      else {
+        this.setResult(gradeText(this.active.score));
+        this.betweenTimer = 0.9;
+      }
     }
   }
 

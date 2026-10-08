@@ -6,8 +6,8 @@ export const DAY_END_HOUR = 18;
 /** Real seconds for one in-game day (08:00 → 18:00). */
 export const DAY_LENGTH_SECONDS = 9 * 60;
 
-export const PRICES = { roll: 1500, baguette: 3800, croissant: 3200 } as const;
-export const BATCH_COST = { roll: 2400, baguette: 3000, croissant: 4200 } as const;
+/** Time-attack length (real seconds). */
+export const RUSH_SECONDS = 300;
 
 export type DayStats = {
   sold: number;
@@ -43,7 +43,9 @@ export class GameState {
   money = 20000;
   reputation = 2.5;
   totalSold = 0;
-  unlocked: string[] = ['roll'];
+  unlocked: string[] = ['roll', 'baguette', 'croissant', 'pretzel'];
+  /** Time-attack run (no save, faster proof/bake, customers order specific breads). */
+  rush = false;
   /** Seconds elapsed in the current day. */
   dayTime = 0;
   /** prep: clock paused, no customers · open: trading · closed: no new guests, day ends when empty. */

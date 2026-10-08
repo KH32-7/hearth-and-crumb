@@ -11,6 +11,7 @@ type MenuHandlers = {
   onQuit: () => void;
   onSettings: (s: Settings) => void;
   onNextDay: () => void;
+  onRush: () => void;
   onSound: (id: string) => void;
 };
 
@@ -67,6 +68,7 @@ export class Menus {
     const cont = this.button(t('menu.continue'), () => this.h.onContinue(), tm);
     cont.disabled = !this.hasSave();
     this.button(t('menu.start'), () => this.h.onNew(), tm);
+    this.button(`⏱ ${t('menu.rush')}`, () => this.h.onRush(), tm, 'rush');
     this.button(t('menu.settings'), () => this.openSettings('title'), tm);
     this.button(t('menu.quit'), () => this.h.onQuit(), tm);
 
@@ -222,6 +224,27 @@ export class Menus {
       this.ledger.classList.remove('show');
       this.h.onNextDay();
     }, m, 'center');
+    this.ledger.classList.add('show');
+  }
+
+  showRushResult(r: { score: number; served: number; missed: number; bestCombo: number; best: number; newBest: boolean }): void {
+    const stars = r.score >= 60000 ? 3 : r.score >= 32000 ? 2 : r.score >= 12000 ? 1 : 0;
+    this.ledger.innerHTML = '';
+    const c = div('card paper ledger rush-result', this.ledger);
+    c.innerHTML = `<h2>⏱ ${t('rushres.title')}</h2>
+      <div class="big-stars">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</div>
+      ${r.newBest ? `<div class="new-best">${t('rushres.newBest')}</div>` : ''}
+      <table>
+        <tr class="total"><td>${t('rushres.score')}</td><td>${won(r.score)}</td></tr>
+        <tr><td>${t('rushres.served')}</td><td>${r.served}</td></tr>
+        <tr><td>${t('rushres.missed')}</td><td>${r.missed}</td></tr>
+        <tr><td>${t('rushres.combo')}</td><td>×${r.bestCombo}</td></tr>
+        <tr><td>${t('rushres.best')}</td><td>${won(r.best)}</td></tr>
+      </table>`;
+    const m = div('menu', c);
+    m.style.marginTop = '16px';
+    this.button(t('rushres.again'), () => this.h.onRush(), m, 'center');
+    this.button(t('menu.title'), () => this.h.onToTitle(), m, 'center');
     this.ledger.classList.add('show');
   }
 

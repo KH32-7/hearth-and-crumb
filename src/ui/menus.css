@@ -225,3 +225,23 @@
 .fade.on {
   opacity: 1;
 }
+
+.btn.rush {
+  color: #8a3a1e;
+}
+
+.rush-result .big-stars {
+  text-align: center;
+  font-size: 52px;
+  letter-spacing: 6px;
+  color: #d98a2b;
+  line-height: 1.1;
+}
+
+.rush-result .new-best {
+  text-align: center;
+  font-family: var(--font-title);
+  font-size: 24px;
+  color: var(--terracotta);
+  margin-bottom: 6px;
+}

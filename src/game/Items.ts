@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Bread, type RecipeId } from './Bread';
+import { RECIPES } from './Recipes';
 import type { PropKit } from '../world/props';
 
 export type IngredientId = 'flour' | 'water' | 'yeast' | 'butter';
@@ -8,7 +9,8 @@ export type IngredientId = 'flour' | 'water' | 'yeast' | 'butter';
 export class Tray {
   readonly group: THREE.Group;
   readonly breads: Bread[] = [];
-  readonly slots: THREE.Vector3[];
+  slots: THREE.Vector3[];
+  private yaws: number[];
   recipe: RecipeId = 'roll';
   /** Quality accumulated from minigames (0..1), multiplied with bake quality at sale. */
   craft = 0.8;
@@ -19,7 +21,16 @@ export class Tray {
   constructor(kit: PropKit) {
     this.group = kit.sheetTray();
     this.slots = this.group.userData.slots as THREE.Vector3[];
+    this.yaws = this.slots.map((_, i) => (i + 1) * 1.3);
     this.group.userData.tray = this;
+  }
+
+  /** Lay the tray out for a recipe (6 buns, 3 baguette lanes, 2×2 croissants…). */
+  setRecipe(recipe: RecipeId): void {
+    this.recipe = recipe;
+    const lay = RECIPES[recipe].layout;
+    this.slots = lay.map(([x, z]) => new THREE.Vector3(x, 0.012, z));
+    this.yaws = lay.map(([, , yaw]) => yaw);
   }
 
   add(bread: Bread): void {
@@ -27,7 +38,7 @@ export class Tray {
     if (!slot) return;
     this.breads.push(bread);
     bread.mesh.position.copy(slot);
-    bread.mesh.rotation.y = this.breads.length * 1.3;
+    bread.mesh.rotation.y = this.yaws[this.breads.length - 1] ?? 0;
     this.group.add(bread.mesh);
   }
 

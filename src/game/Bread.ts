@@ -2,10 +2,12 @@ import * as THREE from 'three';
 import { BreadMaterial } from '../render/BreadMaterial';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry } from '../render/Textures';
+import { RECIPES, type RecipeId } from './Recipes';
+import { finishedGeometry } from './BreadShapes';
 
-export type RecipeId = 'roll' | 'baguette' | 'croissant';
+export type { RecipeId };
 /** roll = pre-scored cross (display/staging) · bun = plain piece the player scores · dough = big batch. */
-export type BreadKind = 'roll' | 'bun' | 'dough' | 'baguette';
+export type BreadKind = 'roll' | 'bun' | 'dough' | 'baguette' | 'croissant' | 'pretzel';
 
 /** Shared state shaders + geometries for every bread entity. */
 export class BreadFactory {
@@ -19,7 +21,8 @@ export class BreadFactory {
     const key = `${kind}:${variant}`;
     let g = this.geoCache.get(key);
     if (!g) {
-      g = kind === 'baguette' ? baguetteGeometry(variant) : roundGeometry(kind === 'roll', variant, kind === 'dough');
+      g =
+        kind === 'baguette' ? finishedGeometry('log') : kind === 'croissant' || kind === 'pretzel' ? finishedGeometry(kind) : roundGeometry(kind === 'roll', variant, kind === 'dough');
       this.geoCache.set(key, g);
     }
     return g;
@@ -48,6 +51,7 @@ export class Bread {
   constructor(factory: BreadFactory, recipe: RecipeId, seed: number, kind: BreadKind = 'roll') {
     this.recipe = recipe;
     this.material = factory.material(seed);
+    this.material.look.tint.set(RECIPES[recipe].tint);
     this.mesh = new THREE.Mesh(factory.geometry(kind, Math.floor(seed * 7) % 4), this.material);
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
@@ -69,7 +73,7 @@ export class Bread {
     look.glaze = this.glaze;
     look.smooth = 0.4 + 0.6 * this.shaped;
     look.bloom = springT;
-    look.flour = THREE.MathUtils.lerp(0.75, 0.3, this.shaped);
+    look.flour = Math.min(1, THREE.MathUtils.lerp(0.75, 0.3, this.shaped) * RECIPES[this.recipe].flour);
     this.material.sync();
   }
 
@@ -79,6 +83,13 @@ export class Bread {
   makePaintable(): void {
     if (this.ownsGeometry) return;
     this.mesh.geometry = this.mesh.geometry.clone();
+    this.ownsGeometry = true;
+  }
+
+  /** Swap in a hand-shaped geometry this bread owns (rope, croissant sheet…). */
+  setGeometry(g: THREE.BufferGeometry): void {
+    if (this.ownsGeometry) this.mesh.geometry.dispose();
+    this.mesh.geometry = g;
     this.ownsGeometry = true;
   }
 
@@ -152,34 +163,6 @@ function roundGeometry(scored: boolean, variant: number, big: boolean): THREE.Bu
   g.computeVertexNormals();
   const r = big ? 0.16 : 0.062;
   g.scale(r, r, r);
-  return g;
-}
-
-function baguetteGeometry(variant: number): THREE.BufferGeometry {
-  const rand = mulberry(300 + variant * 13);
-  const g = welded(new THREE.CapsuleGeometry(0.045, 0.42, 10, 20).rotateZ(Math.PI / 2));
-  const pos = g.attributes.position as THREE.BufferAttribute;
-  const score = new Float32Array(pos.count);
-  const phase = rand() * 6;
-  for (let i = 0; i < pos.count; i++) {
-    let x = pos.getX(i);
-    let y = pos.getY(i);
-    const z = pos.getZ(i);
-    const ny = y / 0.045;
-    // Five diagonal slashes along the top.
-    const t = (x / 0.24 + 1) * 2.5 + z * 6;
-    const slash = Math.abs(((t + 0.5) % 1) - 0.5);
-    const inRange = Math.abs(x) < 0.21 ? 1 : 0;
-    const s = (1 - THREE.MathUtils.smoothstep(slash, 0.05, 0.16)) * THREE.MathUtils.smoothstep(ny, 0.4, 0.85) * inRange * (Math.abs(z) < 0.03 ? 1 : 0);
-    y -= s * 0.012;
-    y = y > 0 ? y * 0.85 : y * 0.55;
-    x += Math.sin(x * 9 + phase) * 0.004;
-    score[i] = s;
-    pos.setXYZ(i, x, y + 0.025, z);
-  }
-  g.setAttribute('aScore', new THREE.BufferAttribute(score, 1));
-  g.setAttribute('aGlaze', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
-  g.computeVertexNormals();
   return g;
 }
 

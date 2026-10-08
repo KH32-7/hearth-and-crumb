@@ -9,11 +9,13 @@ import type { BakeryWorld } from '../world/BakeryWorld';
 import type { Player } from './Player';
 import type { CanvasArt } from '../render/CanvasArt';
 import type { MaterialLibrary } from '../render/Materials';
-import { GameState, PRICES, BATCH_COST } from './State';
+import { GameState } from './State';
+import { RECIPES } from './Recipes';
+import { RecipePickGame } from './RecipePick';
 import { Bread, BreadFactory, bakeQuality, bakeLabel, type RecipeId } from './Bread';
 import { Tray, ingredientProp, type Held, type IngredientId } from './Items';
-import { MinigameHost, MixGame } from './Minigames';
-import { BenchTools, GlazePaintGame, KneadGame, PullGame, RoundTactileGame, ScoreGame, type TactileDeps } from './Tactile';
+import { MinigameHost, MixGame, type Minigame } from './Minigames';
+import { BenchTools, CroissantRollGame, GlazePaintGame, KneadGame, PullGame, RopeRollGame, RoundTactileGame, ScoreGame, type TactileDeps } from './Tactile';
 import { t, won } from '../ui/i18n';
 
 export interface Ctx {
@@ -95,6 +97,8 @@ export class MixerStation extends Station {
   roots: THREE.Object3D[];
   readonly added = new Set<IngredientId>();
   phase: 'idle' | 'mixing' | 'ready' = 'idle';
+  /** Recipe picked for the batch in the bowl (or the last one made). */
+  recipe: RecipeId = 'roll';
   private dough: Bread | null = null;
   private mixQuality = 0.8;
   private readonly contents = new THREE.Group();
@@ -173,25 +177,34 @@ export class MixerStation extends Station {
   private startMixing(): void {
     const ctx = this.ctx;
     this.phase = 'mixing';
-    ctx.state.money -= BATCH_COST.roll;
-    ctx.state.stats.costs += BATCH_COST.roll;
-    ctx.events.emit('toast', { text: t('toast.cost', { cost: won(BATCH_COST.roll) }), tone: 'info' });
     const bowl = this.world(this.contents);
     const view = this.world(this.mixer, new THREE.Vector3(0.05, 0.62, 0.62));
     ctx.player.enterView(view, bowl.clone().add(new THREE.Vector3(0, 0.05, 0)));
     ctx.setBusy(true);
-    // Swap the ingredient blobs for a shaggy dough that smooths as it mixes.
-    this.contents.clear();
-    const dough = new Bread(ctx.breads, 'roll', ctx.rng() * 10, 'dough');
-    dough.baseScale.setScalar(0.55);
-    dough.shaped = 0;
-    dough.proof = 0.3;
-    dough.apply();
-    this.contents.add(dough.mesh);
-    this.dough = dough;
+    const pick = (recipe: RecipeId) => {
+      this.recipe = recipe;
+      const cost = ctx.state.rush ? 0 : RECIPES[recipe].cost;
+      if (cost) {
+        ctx.state.money -= cost;
+        ctx.state.stats.costs += cost;
+        ctx.events.emit('toast', { text: t('toast.cost', { cost: won(cost) }), tone: 'info' });
+      }
+      // Swap the ingredient blobs for a shaggy dough that smooths as it mixes.
+      this.contents.clear();
+      const dough = new Bread(ctx.breads, recipe, ctx.rng() * 10, 'dough');
+      dough.baseScale.setScalar(0.55);
+      dough.shaped = 0;
+      dough.proof = 0.3;
+      dough.apply();
+      this.contents.add(dough.mesh);
+      this.dough = dough;
+    };
     ctx.minigames.run(
       [
+        new RecipePickGame(pick, ctx.state.rush, this.recipe),
         new MixGame((v, running) => {
+          const dough = this.dough;
+          if (!dough) return;
           dough.shaped = Math.min(1, v * 1.25);
           dough.proof = 0.3 + v * 0.4;
           dough.apply();
@@ -202,7 +215,7 @@ export class MixerStation extends Station {
         }),
       ],
       (scores) => {
-        this.mixQuality = scores[0] ?? 0.7;
+        this.mixQuality = scores[1] ?? 0.7;
         this.phase = 'ready';
         ctx.player.exitView();
         ctx.setBusy(false);
@@ -247,6 +260,10 @@ export class WorkbenchStation extends Station {
     return this.tray;
   }
 
+  get doughOnBench(): Bread | null {
+    return this.dough;
+  }
+
   private canFinish(tray: Tray | null): boolean {
     return !!tray && !tray.baked && !tray.finished && tray.proof >= 0.6;
   }
@@ -268,7 +285,7 @@ export class WorkbenchStation extends Station {
         return held ? null : t('bench.shape');
       case 'tray':
         if (held) return null;
-        return this.canFinish(this.tray) ? `${t('bench.finish')}` : t('bench.take');
+        return this.canFinish(this.tray) ? t(`finish.${this.tray!.recipe}` as 'finish.roll') : t('bench.take');
       default:
         return null;
     }
@@ -355,12 +372,19 @@ export class WorkbenchStation extends Station {
     const dough = this.dough!;
     this.phase = 'shaping';
     this.tray = new Tray(ctx.kit);
-    this.tray.recipe = 'roll';
+    const def = RECIPES[dough.recipe];
+    this.tray.setRecipe(def.id);
     this.placeTray();
     ctx.setBusy(true);
     const deps = this.deps();
     const tray = this.tray;
-    ctx.minigames.run([new KneadGame(deps, dough), new PullGame(deps, dough, tray), new RoundTactileGame(deps, tray)], (scores) => {
+    const shape: Minigame =
+      def.shape === 'round'
+        ? new RoundTactileGame(deps, tray)
+        : def.shape === 'croissant'
+          ? new CroissantRollGame(deps, tray)
+          : new RopeRollGame(deps, tray, def.shape === 'pretzel');
+    ctx.minigames.run([new KneadGame(deps, dough), new PullGame(deps, dough, tray, def.pieces, def.grams), shape], (scores) => {
       const [kn = 0.7, pl = 0.7, rd = 0.8] = scores;
       // Shaping is worth 80% of craft; scoring + egg wash on the bench adds the last 20%.
       tray.craft = THREE.MathUtils.clamp(this.doughQuality * 0.2 + kn * 0.2 + pl * 0.25 + rd * 0.15, 0, 0.8);
@@ -382,9 +406,13 @@ export class WorkbenchStation extends Station {
     this.phase = 'finishing';
     ctx.setBusy(true);
     const deps = this.deps();
-    ctx.minigames.run([new ScoreGame(deps, tray), new GlazePaintGame(deps, tray)], (scores) => {
-      const [sc = 0.5, gl = 0.5] = scores;
-      tray.craft = THREE.MathUtils.clamp(tray.craft + sc * 0.1 + gl * 0.1, 0, 1);
+    const def = RECIPES[tray.recipe];
+    const games: Minigame[] = [];
+    if (def.score) games.push(new ScoreGame(deps, tray, def.scoreNeed, def.shape === 'log' ? 0.01 : 0.0075));
+    if (def.glaze) games.push(new GlazePaintGame(deps, tray));
+    ctx.minigames.run(games, (scores) => {
+      const avg = scores.reduce((a, b) => a + b, 0) / Math.max(1, scores.length);
+      tray.craft = THREE.MathUtils.clamp(tray.craft + avg * 0.2, 0, 1);
       tray.finished = true;
       this.phase = 'tray';
       ctx.player.exitView();
@@ -462,7 +490,7 @@ export class ProoferStation extends Station {
     this.door.rotation.y = -this.doorOpen * 1.6;
     if (this.tray) {
       this.tray.forEach((b) => {
-        const rate = b.proof < 1 ? PROOF_RATE : PROOF_RATE * 0.25;
+        const rate = (b.proof < 1 ? PROOF_RATE : PROOF_RATE * 0.25) * (this.ctx.state.rush ? 1.6 : 1);
         b.proof = Math.min(1.25, b.proof + rate * dt);
       });
       if (!this.dinged && this.tray.proof >= 1) {
@@ -482,7 +510,6 @@ export class ProoferStation extends Station {
 
 // ---------------------------------------------------------------- Oven
 
-const BAKE_RATE = 1 / 22;
 
 export class OvenStation extends Station {
   id = 'oven';
@@ -618,8 +645,9 @@ export class OvenStation extends Station {
     this.doorOpen += (target - this.doorOpen) * Math.min(1, dt * 6);
     this.door.rotation.y = -this.doorOpen * 1.75;
     if (this.tray) {
+      const rate = (1 / RECIPES[this.tray.recipe].bakeSeconds) * (this.ctx.state.rush ? 1.3 : 1);
       this.tray.forEach((b) => {
-        b.bake = Math.min(1.35, b.bake + BAKE_RATE * dt * (0.92 + 0.16 * ((b.material.look.seed * 7) % 1)));
+        b.bake = Math.min(1.35, b.bake + rate * dt * (0.92 + 0.16 * ((b.material.look.seed * 7) % 1)));
         // Under-proofed bread browns but stays dense.
       });
       const bake = this.tray.bake;
@@ -709,6 +737,30 @@ export class DisplayBasket extends Station {
   }
 
   private layout(): void {
+    const kind = this.recipe ? RECIPES[this.recipe].shape : 'round';
+    if (kind === 'log') {
+      // Baguettes lie in lanes, stacked crosswise.
+      this.items.forEach((it, i) => {
+        const lane = i % 3;
+        const layer = Math.floor(i / 3);
+        const p = this.slot.position;
+        it.bread.mesh.position.set(p.x + (layer % 2) * 0.02, p.y + layer * 0.07, p.z - 0.12 + lane * 0.12);
+        it.bread.mesh.rotation.set(0, (lane - 1) * 0.06 + layer * 0.05, 0);
+      });
+      return;
+    }
+    if (kind !== 'round') {
+      this.items.forEach((it, i) => {
+        const col = i % 3;
+        const row = Math.floor(i / 3) % 2;
+        const layer = Math.floor(i / 6);
+        const p = this.slot.position;
+        const lift = kind === 'pretzel' ? 0.024 : 0.008;
+        it.bread.mesh.position.set(p.x - 0.2 + col * 0.2 + layer * 0.05, p.y + lift + layer * 0.05, p.z - 0.09 + row * 0.18 + layer * 0.03);
+        it.bread.mesh.rotation.set(0, i * 2.1, 0);
+      });
+      return;
+    }
     this.items.forEach((it, i) => {
       const col = i % 4;
       const row = Math.floor(i / 4) % 3;
@@ -722,7 +774,7 @@ export class DisplayBasket extends Station {
 
   private ensureTag(): void {
     if (this.tag || !this.recipe) return;
-    const price = PRICES[this.recipe];
+    const price = RECIPES[this.recipe].price;
     const tex = this.ctx.art.priceTag(t(`recipe.${this.recipe}` as 'recipe.roll'), `₩${won(price)}`);
     void this.ctx.art.refreshWhenFontsReady();
     const mat = this.ctx.mats.painted({ map: tex, side: THREE.DoubleSide });
