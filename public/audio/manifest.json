@@ -1,0 +1,223 @@
+{
+  "sfx": {
+    "ui_click": {
+      "file": "audio/ui_click.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "ui_hover": {
+      "file": "audio/ui_hover.ogg",
+      "volume": 0.25,
+      "loop": false
+    },
+    "ui_open": {
+      "file": "audio/ui_open.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "pickup": {
+      "file": "audio/pickup.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "place_wood": {
+      "file": "audio/place_wood.ogg",
+      "volume": 0.7,
+      "loop": false
+    },
+    "place_metal": {
+      "file": "audio/place_metal.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "flour_pour": {
+      "file": "audio/flour_pour.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "water_pour": {
+      "file": "audio/water_pour.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "mixer_loop": {
+      "file": "audio/mixer_loop.ogg",
+      "volume": 0.35,
+      "loop": true
+    },
+    "knead_1": {
+      "file": "audio/knead_1.ogg",
+      "volume": 0.65,
+      "loop": false
+    },
+    "knead_2": {
+      "file": "audio/knead_2.ogg",
+      "volume": 0.65,
+      "loop": false
+    },
+    "knead_3": {
+      "file": "audio/knead_3.ogg",
+      "volume": 0.65,
+      "loop": false
+    },
+    "scraper_cut": {
+      "file": "audio/scraper_cut.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "dough_plop": {
+      "file": "audio/dough_plop.ogg",
+      "volume": 0.7,
+      "loop": false
+    },
+    "roll_shape": {
+      "file": "audio/roll_shape.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "brush_glaze": {
+      "file": "audio/brush_glaze.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "oven_open": {
+      "file": "audio/oven_open.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "oven_close": {
+      "file": "audio/oven_close.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "oven_loop": {
+      "file": "audio/oven_loop.ogg",
+      "volume": 0.3,
+      "loop": true
+    },
+    "timer_ding": {
+      "file": "audio/timer_ding.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "perfect_chime": {
+      "file": "audio/perfect_chime.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "good_chime": {
+      "file": "audio/good_chime.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "fail_soft": {
+      "file": "audio/fail_soft.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "burnt_hiss": {
+      "file": "audio/burnt_hiss.ogg",
+      "volume": 0.5,
+      "loop": false
+    },
+    "coin": {
+      "file": "audio/coin.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "register": {
+      "file": "audio/register.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "door_bell": {
+      "file": "audio/door_bell.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "footstep_wood_1": {
+      "file": "audio/footstep_wood_1.ogg",
+      "volume": 0.35,
+      "loop": false
+    },
+    "footstep_wood_2": {
+      "file": "audio/footstep_wood_2.ogg",
+      "volume": 0.35,
+      "loop": false
+    },
+    "footstep_wood_3": {
+      "file": "audio/footstep_wood_3.ogg",
+      "volume": 0.35,
+      "loop": false
+    },
+    "footstep_wood_4": {
+      "file": "audio/footstep_wood_4.ogg",
+      "volume": 0.35,
+      "loop": false
+    },
+    "paper_bag": {
+      "file": "audio/paper_bag.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "cat_meow": {
+      "file": "audio/cat_meow.ogg",
+      "volume": 0.55,
+      "loop": false
+    },
+    "cat_purr": {
+      "file": "audio/cat_purr.ogg",
+      "volume": 0.4,
+      "loop": true
+    },
+    "sparkle": {
+      "file": "audio/sparkle.ogg",
+      "volume": 0.45,
+      "loop": false
+    },
+    "level_up": {
+      "file": "audio/level_up.ogg",
+      "volume": 0.6,
+      "loop": false
+    },
+    "day_end": {
+      "file": "audio/day_end.ogg",
+      "volume": 0.6,
+      "loop": false
+    }
+  },
+  "ambience": {
+    "amb_street": {
+      "file": "audio/amb_street.ogg",
+      "volume": 0.35,
+      "loop": true
+    },
+    "amb_kitchen": {
+      "file": "audio/amb_kitchen.ogg",
+      "volume": 0.2,
+      "loop": true
+    }
+  },
+  "music": {
+    "music_day_1": {
+      "file": "audio/music_day_1.ogg",
+      "volume": 0.4,
+      "loop": true
+    },
+    "music_day_2": {
+      "file": "audio/music_day_2.ogg",
+      "volume": 0.4,
+      "loop": true
+    },
+    "music_menu": {
+      "file": "audio/music_menu.ogg",
+      "volume": 0.45,
+      "loop": true
+    },
+    "music_evening": {
+      "file": "audio/music_evening.ogg",
+      "volume": 0.4,
+      "loop": true
+    }
+  }
+}

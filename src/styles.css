@@ -1,0 +1,46 @@
+:root {
+  --ink: #3a2219;
+  --ink-soft: #6b4a3a;
+  --paper: #f7ecd6;
+  --paper-deep: #ecd9b4;
+  --butter: #e9b95c;
+  --terracotta: #b5553a;
+  --olive: #7c8a4a;
+  --sage: #8f9c6a;
+  --cream: #fbf4e4;
+  --font-hand: 'Gaegu', 'Gowun Dodum', cursive;
+  --font-body: 'Gowun Dodum', 'Gaegu', sans-serif;
+  --font-title: 'Jua', 'Gaegu', sans-serif;
+  color: var(--ink);
+  background: #2a1a14;
+  font-family: var(--font-body);
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+#game-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  outline: none;
+  cursor: crosshair;
+}
+
+#ui-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

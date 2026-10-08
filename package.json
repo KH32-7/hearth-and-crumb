@@ -1,0 +1,74 @@
+{
+  "name": "cozy-bakery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "playwright test",
+    "verify:visual": "playwright test tests/visual.spec.ts",
+    "inspect:canvas": "node scripts/inspect-threejs-canvas.mjs",
+    "desktop:dev": "electron . --dev",
+    "desktop": "npm run build && electron .",
+    "dist:win": "npm run build && electron-builder --win portable nsis",
+    "dist:dir": "npm run build && electron-builder --win --dir"
+  },
+  "dependencies": {
+    "@fontsource/gaegu": "^5.3.0",
+    "@fontsource/gowun-dodum": "^5.3.0",
+    "@fontsource/jua": "^5.3.0",
+    "lil-gui": "^0.21.0",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/three": "^0.184.1",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "pngjs": "^7.0.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.13"
+  },
+  "optionalDependencies": {
+    "steamworks.js": "^0.4.0"
+  },
+  "main": "electron/main.cjs",
+  "productName": "Hearth & Crumb",
+  "description": "A cozy storybook bakery simulator",
+  "author": "Hearth & Crumb",
+  "build": {
+    "appId": "com.hearthcrumb.game",
+    "productName": "Hearth & Crumb",
+    "directories": {
+      "output": "release",
+      "buildResources": "electron"
+    },
+    "files": [
+      "dist/**",
+      "electron/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/steamworks.js/**"
+    ],
+    "win": {
+      "icon": "electron/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Hearth & Crumb"
+    },
+    "portable": {
+      "artifactName": "HearthAndCrumb-${version}-portable.exe"
+    }
+  }
+}
