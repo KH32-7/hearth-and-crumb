@@ -103,6 +103,44 @@ export class CanvasArt {
     return tex;
   }
 
+  /** Hanging OPEN / CLOSED board; returns a setter that repaints it. */
+  shopSign(): { texture: THREE.CanvasTexture; set: (open: boolean) => void } {
+    const w = 384;
+    const h = 192;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    let open = false;
+    const paint = () => {
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = open ? '#e9f0d8' : '#f6e1d2';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = open ? '#6f7f3e' : '#b5553a';
+      ctx.lineWidth = 10;
+      ctx.strokeRect(10, 10, w - 20, h - 20);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = open ? '#4f5f22' : '#9a3f28';
+      ctx.font = `700 76px ${HAND}`;
+      ctx.fillText(open ? 'OPEN' : 'CLOSED', w / 2, 98);
+      ctx.fillStyle = '#4a2e22';
+      ctx.font = `700 40px ${HAND}`;
+      ctx.fillText(open ? '영업 중 · 어서오세요' : '준비 중이에요', w / 2, 156);
+      tex.needsUpdate = true;
+    };
+    paint();
+    this.painters.push(paint);
+    this.textures.push(tex);
+    return {
+      texture: tex,
+      set: (v: boolean) => {
+        open = v;
+        paint();
+      },
+    };
+  }
+
   /** Repaint everything once web fonts finish loading. */
   async refreshWhenFontsReady(): Promise<void> {
     try {

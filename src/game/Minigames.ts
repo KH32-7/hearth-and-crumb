@@ -15,6 +15,10 @@ export interface Minigame {
   update(dt: number, io: MinigameIO): boolean;
   readonly score: number;
   readonly panelExtra?: HTMLElement;
+  /** Tool-driven games show the tool itself instead of the cursor ring. */
+  readonly hideCursor?: boolean;
+  /** Called when this game becomes active (set camera, tools). */
+  enter?(): void;
   dispose?(): void;
 }
 
@@ -55,6 +59,8 @@ export class MinigameHost {
   run(games: Minigame[], onFinish: (scores: number[]) => void): void {
     this.queue = games.slice();
     this.scores = [];
+    this.hud.setSubhint('');
+    this.hud.setPrompt(null);
     this.onFinish = onFinish;
     this.cursor.set(window.innerWidth / 2, window.innerHeight * 0.45);
     this.next();
@@ -83,6 +89,7 @@ export class MinigameHost {
     p.append(this.resultEl);
     this.hud.root.append(p);
     this.panel = p;
+    this.active.enter?.();
   }
 
   setResult(text: string): void {
@@ -114,7 +121,8 @@ export class MinigameHost {
       height: window.innerHeight,
       emit: this.emit,
     };
-    this.hud.setVirtualCursor(this.cursor.x, this.cursor.y, io.down);
+    if (this.active.hideCursor) this.hud.setVirtualCursor(null);
+    else this.hud.setVirtualCursor(this.cursor.x, this.cursor.y, io.down);
     const done = this.active.update(dt, io);
     if (this.helpEl) this.helpEl.textContent = this.active.help();
     if (done) {

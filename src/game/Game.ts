@@ -22,6 +22,7 @@ import { AudioSystem } from '../systems/AudioSystem';
 import { GameState, DAY_LENGTH_SECONDS, DEFAULT_SETTINGS, type Settings, type SaveData } from './State';
 import { BinStation, DisplayBasket, MixerStation, OvenStation, PantryItem, ProoferStation, WorkbenchStation, type Ctx, type Station } from './Stations';
 import { CustomerManager } from './Customers';
+import { BenchTools } from './Tactile';
 import { setLang, t } from '../ui/i18n';
 import { Tray } from './Items';
 import { Bread } from './Bread';
@@ -134,6 +135,7 @@ export class Game {
       sfx: (id, v) => this.sfx(id, v),
       setBusy: (b) => (this.busy = b),
       schedule: (seconds, fn) => this.timers.push({ at: this.elapsed + seconds, fn }),
+      tools: new BenchTools(this.scene, this.mats),
     };
 
     const a = this.world.anchors;
@@ -165,6 +167,15 @@ export class Game {
     });
 
     this.events.on('toast', (e) => this.hud.toast(e.text, e.tone));
+    this.interaction.register({
+      id: 'open-sign',
+      roots: [this.world.openSign],
+      prompt: () => (this.state.phase === 'prep' ? t('sign.open') : this.state.phase === 'open' ? t('sign.close') : t('sign.closed')),
+      interact: () => {
+        if (this.state.phase === 'prep') this.setShopOpen(true);
+        else if (this.state.phase === 'open') this.setShopOpen(false);
+      },
+    });
     // Steam achievements (desktop build only; no-ops on the web).
     const desk = (window as unknown as { hearth?: { steam?: { unlockAchievement: (id: string) => Promise<boolean> } } }).hearth;
     const unlock = (id: string) => void desk?.steam?.unlockAchievement(id);
@@ -180,6 +191,7 @@ export class Game {
       a.register,
       a.bin,
       a.doorPivot,
+      this.world.openSign,
       a.pantry.flour,
       a.pantry.water,
       a.pantry.yeast,
@@ -323,6 +335,15 @@ export class Game {
     localStorage.setItem(SAVE_KEY, JSON.stringify(this.state.toSave()));
   }
 
+  private setShopOpen(open: boolean): void {
+    this.state.phase = open ? 'open' : 'closed';
+    this.world.shopSignArt.set(open);
+    const board = this.world.openSign.getObjectByName('board');
+    if (board) board.userData.flip = 1;
+    this.audio.play(open ? 'door_bell' : 'ui_open', 0.8);
+    this.events.emit('toast', { text: t(open ? 'toast.opened' : 'toast.closedNow'), tone: 'good' });
+  }
+
   private endDay(): void {
     this.mode = 'ledger';
     this.input.exitLock();
@@ -350,7 +371,7 @@ export class Game {
   private applySettings(s: Settings): void {
     this.settings = s;
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
-    this.input.sensitivity = 0.0022 * s.sensitivity;
+    this.input.sensitivity = 0.003 * s.sensitivity;
     this.input.invertY = s.invertY;
     this.audio.setVolumes({ master: s.master, music: s.music, sfx: s.sfx });
     this.pipeline.applyQuality(s.quality);
@@ -395,15 +416,14 @@ export class Game {
     if (this.playing) {
       this.elapsed += dt;
       const s = this.state;
-      s.dayTime += dt;
+      if (s.phase === 'open') s.dayTime += dt;
       if (s.open && s.dayTime >= DAY_LENGTH_SECONDS) {
-        s.open = false;
-        this.events.emit('toast', { text: t('hud.closed'), tone: 'info' });
+        this.setShopOpen(false);
       } else if (s.open && !this.closingWarned && s.dayTime >= DAY_LENGTH_SECONDS * 0.92) {
         this.closingWarned = true;
         this.events.emit('toast', { text: t('toast.closing'), tone: 'info' });
       }
-      if (!s.open && this.customers.customers.length === 0) this.endDay();
+      if (s.phase === 'closed' && this.customers.customers.length === 0) this.endDay();
 
       const canAct = !this.busy && (input.locked || this.testMode);
       this.player.update(dt, input, canAct);
@@ -430,6 +450,7 @@ export class Game {
       }
       this.hud.setCrosshairVisible(!this.minigames.running && !this.busy);
       this.minigames.update(dt);
+      this.ctx.tools.aim(this.camera);
       if (this.timers.length) {
         const due = this.timers.filter((tm) => tm.at <= this.elapsed);
         this.timers = this.timers.filter((tm) => tm.at > this.elapsed);
@@ -449,11 +470,16 @@ export class Game {
     const animDt = this.reducedMotion ? 0 : this.paused ? 0 : dt;
     this.lights.update(animDt);
     this.world.update(animDt, this.reducedMotion ? 0 : this.elapsed);
+    const board = this.world.openSign.getObjectByName('board');
+    if (board && board.userData.flip > 0) {
+      board.userData.flip = Math.max(0, board.userData.flip - dt * 2.2);
+      board.rotation.y = (1 - board.userData.flip) * Math.PI * 2;
+    }
     this.vfx.update(animDt);
     if (this.mode === 'play') {
       for (const st of this.stations) st.labels();
       this.hud.endLabels();
-      this.hud.setStatus(this.state.day, this.state.clockLabel(), this.state.money, this.state.reputation, this.state.open, this.state.dayProgress);
+      this.hud.setStatus(this.state.day, this.state.clockLabel(), this.state.money, this.state.reputation, this.state.phase, this.state.dayProgress);
       this.hud.setRecipe(t('recipe.roll'), this.recipeStep());
     }
     input.consumeFrame();
@@ -463,14 +489,17 @@ export class Game {
   /** Which recipe-card step the baker is on, derived from world state. */
   private recipeStep(): number {
     const held = this.interaction.held;
-    if (held?.kind === 'tray' && held.tray.baked) return 5;
-    if (this.oven.tray) return 4;
-    if (held?.kind === 'tray' && held.tray.proof >= 0.85) return 4;
+    const tray = held?.kind === 'tray' ? held.tray : this.bench.trayOnBench;
+    if (held?.kind === 'tray' && held.tray.baked) return 6;
+    if (this.oven.tray) return 5;
+    if (tray && tray.finished) return 5;
+    if (this.bench.phase === 'shaping') return 2;
+    if (this.bench.phase === 'finishing' || (tray && tray.proof >= 0.6)) return 4;
     if (this.proofer.tray) return 3;
-    if (held?.kind === 'tray' || this.bench.phase === 'tray') return 3;
+    if (tray) return 3;
     if (this.bench.phase !== 'empty' || held?.kind === 'dough' || this.mixer.phase === 'ready') return 2;
     if (this.mixer.phase === 'mixing' || this.mixer.missing().length === 0) return 1;
-    if (this.mixer.added.size === 0 && this.baskets.some((b) => b.items.length)) return 6;
+    if (this.mixer.added.size === 0 && this.baskets.some((b) => b.items.length)) return 7;
     return 0;
   }
 

@@ -41,6 +41,8 @@ export class BakeryWorld {
   readonly art = new CanvasArt();
   private readonly kit: PropKit;
   private readonly flames: THREE.Mesh[] = [];
+  readonly shopSignArt = this.art.shopSign();
+  openSign!: THREE.Group;
   clock: THREE.Group | null = null;
 
   constructor(
@@ -277,7 +279,7 @@ export class BakeryWorld {
     muntin.position.set(dw / 2, 1.62, 0);
     const knob = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), m.brass);
     knob.position.set(dw - 0.12, 1.0, -0.06);
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.16), this.mats.painted({ map: this.art.priceTag('OPEN', '어서오세요') }));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.17), this.mats.painted({ map: this.shopSignArt.texture }));
     sign.position.set(dw / 2, 1.5, -0.04);
     sign.rotation.y = Math.PI;
     door.add(panelLow, stileL, stileR, rail, pane, muntin, knob, sign);
@@ -637,7 +639,31 @@ export class BakeryWorld {
     });
     const register = k.cashRegister();
     this.add(register, 2.75, COUNTER_TOP, ctrZ - 0.05, Math.PI);
-    this.add(k.shopBell(), 2.2, COUNTER_TOP, ctrZ + 0.2);
+    this.add(k.shopBell(), 2.15, COUNTER_TOP, ctrZ + 0.22);
+    // OPEN / CLOSED board on a little stand: the player flips it to start / end trading.
+    const stand = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.42, 8), k.m.walnut);
+    post.position.y = 0.21;
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.025, 14), k.m.walnut);
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.36, 6), k.m.iron);
+    arm.rotation.z = Math.PI / 2;
+    arm.position.set(0, 0.41, 0);
+    const board = new THREE.Group();
+    board.name = 'board';
+    board.position.set(0, 0.29, 0);
+    const boardMat = this.mats.painted({ map: this.shopSignArt.texture, side: THREE.DoubleSide });
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.17), boardMat);
+    const frame = new THREE.Mesh(worldBox(0.36, 0.19, 0.012, 1), k.m.walnut);
+    frame.position.z = -0.008;
+    const back = face.clone();
+    back.rotation.y = Math.PI;
+    back.position.z = -0.016;
+    board.add(frame, face, back);
+    stand.add(shadowed(post), base, arm, shadowed(board));
+    stand.position.set(1.7, COUNTER_TOP, ctrZ - 0.12);
+    stand.rotation.y = Math.PI;
+    this.group.add(stand);
+    this.openSign = stand;
     this.add(k.paperBagStack(), 3.25, COUNTER_TOP, ctrZ - 0.05, 0.2);
 
     return {

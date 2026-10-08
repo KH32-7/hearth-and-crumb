@@ -192,8 +192,8 @@ function lerpAngle(a: number, b: number, t: number): number {
 /** Spawning, browsing, queueing, paying. */
 export class CustomerManager {
   readonly customers: Customer[] = [];
-  // First guest arrives after the opening bake has had a fair chance.
-  private spawnTimer = 75;
+  // The player opens the shop when ready; the first guest follows shortly after.
+  private spawnTimer = 8;
   private readonly bubbles: Record<string, THREE.Texture>;
 
   constructor(
@@ -386,7 +386,7 @@ export class CustomerManager {
   clear(): void {
     for (const c of this.customers) c.group.removeFromParent();
     this.customers.length = 0;
-    this.spawnTimer = 75;
+    this.spawnTimer = 8;
   }
 }
 

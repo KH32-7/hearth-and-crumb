@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import './hud.css';
 import { t, won, type StringKey } from './i18n';
 
-export const RECIPE_STEPS: StringKey[] = ['step.ingredients', 'step.mix', 'step.shape', 'step.proof', 'step.bake', 'step.display', 'step.sell'];
+export const RECIPE_STEPS: StringKey[] = ['step.ingredients', 'step.mix', 'step.shape', 'step.proof', 'step.finish', 'step.bake', 'step.display', 'step.sell'];
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', parent?: HTMLElement): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -68,8 +68,8 @@ export class Hud {
     this.controlsHint.style.opacity = '0';
   }
 
-  setStatus(day: number, clock: string, money: number, reputation: number, open: boolean, dayProgress: number): void {
-    const key = `${day}|${clock}|${money}|${reputation.toFixed(1)}|${open}`;
+  setStatus(day: number, clock: string, money: number, reputation: number, phase: 'prep' | 'open' | 'closed', dayProgress: number): void {
+    const key = `${day}|${clock}|${money}|${reputation.toFixed(1)}|${phase}`;
     if (key === this.lastStatus) return;
     this.lastStatus = key;
     const full = Math.round(reputation * 2) / 2;
@@ -80,7 +80,7 @@ export class Hud {
       <div class="clock"><span class="sun" style="${hue}"></span>${clock}</div>
       <div class="money">₩${won(money)}</div>
       <div class="stars">${stars}</div>
-      <div class="open ${open ? '' : 'closed'}">● ${open ? t('hud.open') : t('hud.closed')}</div>`;
+      <div class="open ${phase === 'open' ? '' : 'closed'}">● ${phase === 'open' ? t('hud.open') : phase === 'prep' ? t('hud.prep') : t('hud.closed')}</div>`;
   }
 
   setRecipe(title: string, current: number): void {
@@ -129,6 +129,15 @@ export class Hud {
       if (!this.labelUsed.has(id)) e.style.display = 'none';
     }
     this.labelUsed.clear();
+  }
+
+  /** Cooking-Mama style floating praise text. */
+  pop(text: string, x: number, y: number, tone: 'good' | 'great' | 'meh' = 'good'): void {
+    const p = el('div', `pop ${tone}`, this.root);
+    p.textContent = text;
+    p.style.left = `${x}px`;
+    p.style.top = `${y}px`;
+    setTimeout(() => p.remove(), 1100);
   }
 
   setVirtualCursor(x: number | null, y = 0, down = false): void {

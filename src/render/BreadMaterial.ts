@@ -79,7 +79,9 @@ export class BreadMaterial extends THREE.MeshToonMaterial {
           '#include <common>',
           `#include <common>
 attribute float aScore;
+attribute float aGlaze;
 uniform float uBloom;
+varying float vGlaze;
 varying vec3 vBreadPos;
 varying vec3 vBreadNormal;
 varying float vScore;`,
@@ -90,8 +92,9 @@ varying float vScore;`,
 vBreadPos = position;
 vBreadNormal = normal;
 vScore = aScore;
-// Oven spring: the cut ridges heave up and outward, opening the score.
-transformed += normal * aScore * uBloom * 0.012;
+vGlaze = aGlaze;
+// A fresh cut is a shallow groove; in the oven the ridges heave up and open (oven spring).
+transformed += normal * aScore * (uBloom * 0.014 - 0.01 * (1.0 - uBloom));
 transformed.y += aScore * uBloom * 0.01;`,
         );
       shader.fragmentShader = shader.fragmentShader
@@ -113,6 +116,7 @@ uniform sampler2D uCrust;
 varying vec3 vBreadPos;
 varying vec3 vBreadNormal;
 varying float vScore;
+varying float vGlaze;
 
 vec3 breadRamp(float t) {
   vec4 s[${STOPS.length}];
@@ -160,6 +164,10 @@ vec4 triplanar(sampler2D tex, vec3 p, vec3 n, float scale) {
   crust = mix(vec3(cl), crust, mix(1.0, uSat, bakedness));
   crust *= mix(1.0, uVal, bakedness);
 
+  // A fresh cut in raw dough shows a slightly darker, damp line (opens pale once baked).
+  crust *= mix(1.0, 0.72, vScore * (1.0 - smoothstep(0.25, 0.6, uBake)));
+  // Wet egg wash on raw dough reads as a glossy butter-yellow film.
+  crust = mix(crust, crust * vec3(1.05, 0.95, 0.7), vGlaze * (1.0 - bakedness) * 0.85);
   diffuseColor.rgb *= clamp(crust, 0.0, 1.0);
 }`,
         )
@@ -178,14 +186,16 @@ vec4 triplanar(sampler2D tex, vec3 p, vec3 n, float scale) {
   outgoingLight = mix(outgoingLight, diffuseColor.rgb * (0.78 + 0.3 * lit), uFlat * (0.4 + 0.6 * baked));
   // Soft warm bounce: bread never goes grey in shadow (fake subsurface).
   outgoingLight += diffuseColor.rgb * vec3(0.24, 0.16, 0.06) * (1.0 - lit);
-  float shine = mix(0.18, 1.0, uGlaze) * (0.35 + 0.65 * smoothstep(0.4, 0.95, uBake)) * (1.0 - smoothstep(1.1, 1.3, uBake));
+  float gl = max(uGlaze, vGlaze);
+  // Wet glaze shines even before baking; baked glaze keeps the golden gloss.
+  float shine = mix(0.18, 1.0, gl) * mix(0.35 + 0.65 * smoothstep(0.4, 0.95, uBake), 0.45, gl * (1.0 - smoothstep(0.2, 0.6, uBake))) * (1.0 - smoothstep(1.1, 1.3, uBake));
   #if NUM_DIR_LIGHTS > 0
     vec3 L = directionalLights[0].direction;
     vec3 H = normalize(L + V);
     float nh = max(dot(N, H), 0.0);
-    float blob = smoothstep(0.5, 0.62, pow(nh, mix(60.0, 26.0, uGlaze)));
+    float blob = smoothstep(0.5, 0.62, pow(nh, mix(60.0, 26.0, gl)));
     float speck = step(0.86, hash21(floor(vBreadPos.xz * 90.0) + uSeed)) * smoothstep(0.3, 0.9, pow(nh, 8.0));
-    outgoingLight += directionalLights[0].color * (blob * 0.75 + speck * 0.35 * uGlaze) * shine * smoothstep(0.2, 0.55, lit);
+    outgoingLight += directionalLights[0].color * (blob * 0.75 + speck * 0.35 * gl) * shine * smoothstep(0.2, 0.55, lit);
   #endif
   // Golden rim so the silhouette glows against the room (the "illustration" pop).
   float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.5);

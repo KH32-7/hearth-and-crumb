@@ -4,6 +4,8 @@ import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { mulberry } from '../render/Textures';
 
 export type RecipeId = 'roll' | 'baguette' | 'croissant';
+/** roll = pre-scored cross (display/staging) · bun = plain piece the player scores · dough = big batch. */
+export type BreadKind = 'roll' | 'bun' | 'dough' | 'baguette';
 
 /** Shared state shaders + geometries for every bread entity. */
 export class BreadFactory {
@@ -13,11 +15,11 @@ export class BreadFactory {
     private readonly crust: THREE.Texture,
   ) {}
 
-  geometry(kind: 'roll' | 'dough' | 'baguette', variant: number): THREE.BufferGeometry {
+  geometry(kind: BreadKind, variant: number): THREE.BufferGeometry {
     const key = `${kind}:${variant}`;
     let g = this.geoCache.get(key);
     if (!g) {
-      g = kind === 'baguette' ? baguetteGeometry(variant) : roundGeometry(kind === 'roll', variant);
+      g = kind === 'baguette' ? baguetteGeometry(variant) : roundGeometry(kind === 'roll', variant, kind === 'dough');
       this.geoCache.set(key, g);
     }
     return g;
@@ -39,10 +41,11 @@ export class Bread {
   bake = 0;
   glaze = 0;
   shaped = 1; // 0 lumpy offcut … 1 perfectly rounded
+  scored = 0; // 0 no cut … 1 neatly scored by the player
   recipe: RecipeId;
   baseScale = new THREE.Vector3(1, 1, 1);
 
-  constructor(factory: BreadFactory, recipe: RecipeId, seed: number, kind: 'roll' | 'dough' | 'baguette' = 'roll') {
+  constructor(factory: BreadFactory, recipe: RecipeId, seed: number, kind: BreadKind = 'roll') {
     this.recipe = recipe;
     this.material = factory.material(seed);
     this.mesh = new THREE.Mesh(factory.geometry(kind, Math.floor(seed * 7) % 4), this.material);
@@ -70,8 +73,26 @@ export class Bread {
     this.material.sync();
   }
 
+  private ownsGeometry = false;
+
+  /** Give this bread its own geometry so score / glaze can be painted per vertex. */
+  makePaintable(): void {
+    if (this.ownsGeometry) return;
+    this.mesh.geometry = this.mesh.geometry.clone();
+    this.ownsGeometry = true;
+  }
+
+  get scoreAttr(): THREE.BufferAttribute {
+    return this.mesh.geometry.attributes.aScore as THREE.BufferAttribute;
+  }
+
+  get glazeAttr(): THREE.BufferAttribute {
+    return this.mesh.geometry.attributes.aGlaze as THREE.BufferAttribute;
+  }
+
   dispose(): void {
     this.material.dispose();
+    if (this.ownsGeometry) this.mesh.geometry.dispose();
   }
 }
 
@@ -92,8 +113,8 @@ export function bakeLabel(bake: number): 'raw' | 'pale' | 'golden' | 'perfect' |
 
 // ---------------- geometry ----------------
 
-function roundGeometry(scored: boolean, variant: number): THREE.BufferGeometry {
-  const rand = mulberry(100 + variant * 17 + (scored ? 0 : 999));
+function roundGeometry(scored: boolean, variant: number, big: boolean): THREE.BufferGeometry {
+  const rand = mulberry(100 + variant * 17 + (big ? 999 : 0));
   const g = welded(new THREE.SphereGeometry(1, 44, 30));
   const pos = g.attributes.position as THREE.BufferAttribute;
   const score = new Float32Array(pos.count);
@@ -106,10 +127,10 @@ function roundGeometry(scored: boolean, variant: number): THREE.BufferGeometry {
     const lump =
       Math.sin(n.x * 3.1 + phases[0]) * Math.sin(n.z * 2.7 + phases[1]) * 0.035 +
       Math.sin(n.y * 4.3 + n.x * 2.0 + phases[2]) * 0.02 +
-      Math.sin(n.z * 7.0 + n.y * 5.0 + phases[3]) * (scored ? 0.008 : 0.02);
+      Math.sin(n.z * 7.0 + n.y * 5.0 + phases[3]) * (big ? 0.02 : 0.008);
     v.multiplyScalar(1 + lump);
     // Dome top, flat-ish bottom that "sits" on the tray.
-    if (v.y > 0) v.y *= scored ? 0.82 : 0.74;
+    if (v.y > 0) v.y *= big ? 0.74 : 0.82;
     else v.y = v.y * 0.24;
     v.x *= 1 + Math.max(0, -n.y) * 0.08;
     v.z *= 1 + Math.max(0, -n.y) * 0.08;
@@ -122,14 +143,14 @@ function roundGeometry(scored: boolean, variant: number): THREE.BufferGeometry {
       const cz = Math.abs(n.x * Math.sin(a) + n.z * Math.cos(a));
       const d = Math.min(cx, cz);
       s = (1 - THREE.MathUtils.smoothstep(d, 0.025, 0.1)) * top * (1 - THREE.MathUtils.smoothstep(Math.max(cx, cz), 0.45, 0.6));
-      v.y -= s * 0.09;
     }
     score[i] = s;
     pos.setXYZ(i, v.x, v.y + 0.24, v.z);
   }
   g.setAttribute('aScore', new THREE.BufferAttribute(score, 1));
+  g.setAttribute('aGlaze', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
   g.computeVertexNormals();
-  const r = scored ? 0.062 : 0.16;
+  const r = big ? 0.16 : 0.062;
   g.scale(r, r, r);
   return g;
 }
@@ -157,6 +178,7 @@ function baguetteGeometry(variant: number): THREE.BufferGeometry {
     pos.setXYZ(i, x, y + 0.025, z);
   }
   g.setAttribute('aScore', new THREE.BufferAttribute(score, 1));
+  g.setAttribute('aGlaze', new THREE.BufferAttribute(new Float32Array(pos.count), 1));
   g.computeVertexNormals();
   return g;
 }

@@ -46,7 +46,11 @@ export class GameState {
   unlocked: string[] = ['roll'];
   /** Seconds elapsed in the current day. */
   dayTime = 0;
-  open = true;
+  /** prep: clock paused, no customers · open: trading · closed: no new guests, day ends when empty. */
+  phase: 'prep' | 'open' | 'closed' = 'prep';
+  get open(): boolean {
+    return this.phase === 'open';
+  }
   stats: DayStats = emptyStats();
 
   get clockHours(): number {
@@ -68,7 +72,7 @@ export class GameState {
   newDay(): void {
     this.day += 1;
     this.dayTime = 0;
-    this.open = true;
+    this.phase = 'prep';
     this.stats = emptyStats();
   }
 
@@ -83,7 +87,7 @@ export class GameState {
     this.totalSold = s.totalSold;
     this.unlocked = [...s.unlocked];
     this.dayTime = 0;
-    this.open = true;
+    this.phase = 'prep';
     this.stats = emptyStats();
   }
 }

@@ -13,6 +13,8 @@ export class Tray {
   /** Quality accumulated from minigames (0..1), multiplied with bake quality at sale. */
   craft = 0.8;
   baked = false;
+  /** Scored and egg-washed after proofing. */
+  finished = false;
 
   constructor(kit: PropKit) {
     this.group = kit.sheetTray();

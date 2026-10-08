@@ -12,7 +12,8 @@ import type { MaterialLibrary } from '../render/Materials';
 import { GameState, PRICES, BATCH_COST } from './State';
 import { Bread, BreadFactory, bakeQuality, bakeLabel, type RecipeId } from './Bread';
 import { Tray, ingredientProp, type Held, type IngredientId } from './Items';
-import { MinigameHost, MixGame, DivideGame, RoundGame, GlazeGame } from './Minigames';
+import { MinigameHost, MixGame } from './Minigames';
+import { BenchTools, GlazePaintGame, KneadGame, PullGame, RoundTactileGame, ScoreGame, type TactileDeps } from './Tactile';
 import { t, won } from '../ui/i18n';
 
 export interface Ctx {
@@ -35,6 +36,7 @@ export interface Ctx {
   sfx: (id: string, volume?: number) => void;
   /** Locks player control (station views, beauty shots). */
   setBusy: (busy: boolean) => void;
+  tools: BenchTools;
   /** Run `fn` after `seconds` of unpaused game time. */
   schedule: (seconds: number, fn: () => void) => void;
 }
@@ -223,7 +225,7 @@ export class MixerStation extends Station {
 export class WorkbenchStation extends Station {
   id = 'bench';
   roots: THREE.Object3D[];
-  phase: 'empty' | 'dough' | 'shaping' | 'tray' = 'empty';
+  phase: 'empty' | 'dough' | 'shaping' | 'tray' | 'finishing' = 'empty';
   private dough: Bread | null = null;
   private doughQuality = 0.8;
   private tray: Tray | null = null;
@@ -241,8 +243,16 @@ export class WorkbenchStation extends Station {
     this.highlight = [];
   }
 
+  get trayOnBench(): Tray | null {
+    return this.tray;
+  }
+
+  private canFinish(tray: Tray | null): boolean {
+    return !!tray && !tray.baked && !tray.finished && tray.proof >= 0.6;
+  }
+
   actionable(held: Held): boolean {
-    if (this.phase === 'empty') return held?.kind === 'dough' || held?.kind === 'tray';
+    if (this.phase === 'empty') return held?.kind === 'dough' || (held?.kind === 'tray' && !held.tray.baked);
     if (this.phase === 'dough') return !held;
     if (this.phase === 'tray') return !held;
     return false;
@@ -252,15 +262,24 @@ export class WorkbenchStation extends Station {
     switch (this.phase) {
       case 'empty':
         if (held?.kind === 'dough') return t('bench.place');
-        if (held?.kind === 'tray') return t('display.place').replace('바구니에 진열하기', '작업대에 내려놓기');
+        if (held?.kind === 'tray' && !held.tray.baked) return this.canFinish(held.tray) ? t('bench.placeFinish') : t('bench.placeTray');
         return held ? null : t('bench.empty');
       case 'dough':
         return held ? null : t('bench.shape');
       case 'tray':
-        return held ? null : t('bench.take');
+        if (held) return null;
+        return this.canFinish(this.tray) ? `${t('bench.finish')}` : t('bench.take');
       default:
         return null;
     }
+  }
+
+  secondaryPrompt(held: Held): string | null {
+    return !held && this.phase === 'tray' && this.canFinish(this.tray) ? t('bench.takeAlt') : null;
+  }
+
+  secondary(held: Held): void {
+    if (!held && this.phase === 'tray') this.takeTray();
   }
 
   interact(held: Held): void {
@@ -278,7 +297,7 @@ export class WorkbenchStation extends Station {
       this.phase = 'dough';
       return;
     }
-    if (this.phase === 'empty' && held?.kind === 'tray') {
+    if (this.phase === 'empty' && held?.kind === 'tray' && !held.tray.baked) {
       ctx.interaction.setHeld(null);
       this.tray = held.tray;
       this.placeTray();
@@ -291,13 +310,20 @@ export class WorkbenchStation extends Station {
       return;
     }
     if (this.phase === 'tray' && !held && this.tray) {
-      const tray = this.tray;
-      this.tray = null;
-      ctx.interaction.setHeld({ kind: 'tray', tray });
-      this.phase = 'empty';
-      ctx.sfx('place_metal', 0.5);
-      ctx.events.emit('tutorial', { step: 'tray-taken' });
+      if (this.canFinish(this.tray)) this.startFinishing();
+      else this.takeTray();
     }
+  }
+
+  private takeTray(): void {
+    const ctx = this.ctx;
+    if (!this.tray) return;
+    const tray = this.tray;
+    this.tray = null;
+    ctx.interaction.setHeld({ kind: 'tray', tray });
+    this.phase = 'empty';
+    ctx.sfx('place_metal', 0.5);
+    ctx.events.emit('tutorial', { step: 'tray-taken' });
   }
 
   private placeTray(): void {
@@ -308,6 +334,22 @@ export class WorkbenchStation extends Station {
     this.ctx.scene.add(this.tray.group);
   }
 
+  private deps(): TactileDeps {
+    const ctx = this.ctx;
+    return {
+      scene: ctx.scene,
+      planeY: this.anchor.y,
+      tools: ctx.tools,
+      vfx: ctx.vfx,
+      hud: ctx.hud,
+      breads: ctx.breads,
+      rng: ctx.rng,
+      sfx: ctx.sfx,
+      view: (pos, look) => ctx.player.enterView(pos, look),
+    };
+  }
+
+  /** Knead → pull pieces onto the tray → round them, all by hand. */
   private startShaping(): void {
     const ctx = this.ctx;
     const dough = this.dough!;
@@ -315,75 +357,17 @@ export class WorkbenchStation extends Station {
     this.tray = new Tray(ctx.kit);
     this.tray.recipe = 'roll';
     this.placeTray();
-    const center = this.anchor.clone().add(new THREE.Vector3(0, 0, -0.02));
-    ctx.player.enterView(center.clone().add(new THREE.Vector3(0, 0.82, 0.5)), center);
     ctx.setBusy(true);
-    const pieces: Bread[] = [];
+    const deps = this.deps();
     const tray = this.tray;
-    let taken = 0;
-    const divide = new DivideGame((i, grams, pulling) => {
-      let piece = pieces[i];
-      if (!piece) {
-        piece = new Bread(ctx.breads, 'roll', ctx.rng() * 10 + i, 'roll');
-        piece.shaped = 0.15;
-        tray.add(piece);
-        pieces[i] = piece;
-      }
-      const s = Math.cbrt(Math.max(grams, 8) / 60);
-      piece.baseScale.setScalar(s);
-      piece.apply();
-      if (pulling >= 0) {
-        const remain = Math.max(0.25, 1 - (taken + grams) / 420);
-        dough.baseScale.setScalar(Math.cbrt(remain));
-        dough.mesh.scale.y *= 1 - pulling * 0.08;
-        dough.apply();
-      } else {
-        taken += grams;
-        ctx.vfx.flourPuff(this.worldOf(piece.mesh).add(new THREE.Vector3(0, 0.05, 0)), 6);
-      }
-    });
-    const round = new RoundGame(
-      Array.from({ length: 6 }, (_, i) => {
-        const proxy = new THREE.Object3D();
-        proxy.position.copy(tray.slots[i]).add(new THREE.Vector3(0, 0.05, 0));
-        tray.group.add(proxy);
-        return proxy;
-      }),
-      (i, p) => {
-        const piece = pieces[i];
-        if (!piece) return;
-        piece.shaped = 0.15 + 0.85 * p;
-        piece.mesh.rotation.y += 0.08;
-        const wob = Math.sin(p * Math.PI * 8) * 0.06 * (1 - p);
-        piece.apply();
-        piece.mesh.scale.x *= 1 + wob;
-        piece.mesh.scale.z *= 1 - wob;
-      },
-    );
-    const glaze = new GlazeGame(
-      Array.from({ length: 6 }, (_, i) => {
-        const proxy = new THREE.Object3D();
-        proxy.position.copy(tray.slots[i]).add(new THREE.Vector3(0, 0.07, 0));
-        tray.group.add(proxy);
-        return proxy;
-      }),
-      (i, amount) => {
-        const piece = pieces[i];
-        if (!piece) return;
-        piece.glaze = amount;
-        piece.apply();
-      },
-    );
-    ctx.minigames.run([divide, round, glaze], (scores) => {
-      const [dv = 0.7, rd = 0.8, gl = 0] = scores;
-      tray.craft = THREE.MathUtils.clamp(this.doughQuality * 0.3 + dv * 0.3 + rd * 0.25 + (0.6 + gl * 0.4) * 0.15, 0, 1);
-      // Dough is used up.
+    ctx.minigames.run([new KneadGame(deps, dough), new PullGame(deps, dough, tray), new RoundTactileGame(deps, tray)], (scores) => {
+      const [kn = 0.7, pl = 0.7, rd = 0.8] = scores;
+      // Shaping is worth 80% of craft; scoring + egg wash on the bench adds the last 20%.
+      tray.craft = THREE.MathUtils.clamp(this.doughQuality * 0.2 + kn * 0.2 + pl * 0.25 + rd * 0.15, 0, 0.8);
       this.ctx.interaction.forget(dough.mesh);
       dough.mesh.removeFromParent();
       dough.dispose();
       this.dough = null;
-      // Clean up proxies.
-      tray.group.children.filter((c) => c.type === 'Object3D').forEach((c) => tray.group.remove(c));
       this.phase = 'tray';
       ctx.player.exitView();
       ctx.setBusy(false);
@@ -391,8 +375,22 @@ export class WorkbenchStation extends Station {
     });
   }
 
-  private worldOf(o: THREE.Object3D): THREE.Vector3 {
-    return o.getWorldPosition(new THREE.Vector3());
+  /** After proofing: draw the score with a knife, brush on egg wash. */
+  private startFinishing(): void {
+    const ctx = this.ctx;
+    const tray = this.tray!;
+    this.phase = 'finishing';
+    ctx.setBusy(true);
+    const deps = this.deps();
+    ctx.minigames.run([new ScoreGame(deps, tray), new GlazePaintGame(deps, tray)], (scores) => {
+      const [sc = 0.5, gl = 0.5] = scores;
+      tray.craft = THREE.MathUtils.clamp(tray.craft + sc * 0.1 + gl * 0.1, 0, 1);
+      tray.finished = true;
+      this.phase = 'tray';
+      ctx.player.exitView();
+      ctx.setBusy(false);
+      ctx.events.emit('tutorial', { step: 'finished' });
+    });
   }
 }
 
@@ -513,7 +511,8 @@ export class OvenStation extends Station {
     if (held?.kind === 'tray') {
       if (this.tray) return t('oven.busy');
       if (held.tray.baked) return null;
-      return held.tray.proof < 0.85 ? t('oven.unproofed') : t('oven.place');
+      if (held.tray.proof < 0.85) return t('oven.unproofed');
+      return held.tray.finished ? t('oven.place') : t('oven.unfinished');
     }
     if (!held && this.tray) return t('oven.take');
     return null;

@@ -4,8 +4,10 @@ import { ROOM } from '../world/BakeryWorld';
 
 const EYE = 1.62;
 const RADIUS = 0.26;
-const SPEED = 2.5;
-const ACCEL = 14;
+const SPEED = 3.4;
+const SPRINT = 1.45;
+const ACCEL = 24;
+const DECEL = 30;
 
 /**
  * First-person baker. Circle-vs-AABB push-out against the world's colliders;
@@ -70,9 +72,10 @@ export class Player {
       const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
       wish.addScaledVector(fwd, f).addScaledVector(right, r);
       if (wish.lengthSq() > 1) wish.normalize();
-      wish.multiplyScalar(SPEED * (input.held('ShiftLeft') ? 1.35 : 1));
+      wish.multiplyScalar(SPEED * (input.held('ShiftLeft') || input.held('ShiftRight') ? SPRINT : 1));
     }
-    const k = 1 - Math.exp(-ACCEL * dt);
+    // Snappy start, even snappier stop: no ice-skating.
+    const k = 1 - Math.exp(-(wish.lengthSq() > 0 ? ACCEL : DECEL) * dt);
     this.velocity.lerp(wish, k);
     this.position.addScaledVector(this.velocity, dt);
     this.collide();
@@ -86,18 +89,24 @@ export class Player {
     }
 
     // Free-look camera transform.
-    const bob = Math.sin(this.bobTime * 2) * 0.012 * Math.min(1, speed / SPEED);
+    const bob = Math.sin(this.bobTime * 2) * 0.008 * Math.min(1, speed / SPEED);
     this.tmpPos.set(this.position.x, EYE + bob, this.position.z);
     this.freeQuat.setFromEuler(new THREE.Euler(this.pitch, this.yaw, Math.sin(this.bobTime) * 0.004, 'YXZ'));
 
     // Ease into / out of station view.
     const target = this.viewTarget ? 1 : 0;
-    this.viewBlend += (target - this.viewBlend) * (1 - Math.exp(-7 * dt));
+    this.viewBlend += (target - this.viewBlend) * (1 - Math.exp(-11 * dt));
     if (Math.abs(this.viewBlend - target) < 0.001) this.viewBlend = target;
     if (this.viewTarget) {
       // Camera convention: looks down -Z.
       this.viewQuat.setFromRotationMatrix(new THREE.Matrix4().lookAt(this.viewTarget.pos, this.viewTarget.look, new THREE.Vector3(0, 1, 0)));
-      this.lastView = { pos: this.viewTarget.pos.clone(), quat: this.viewQuat.clone() };
+      if (!this.lastView || this.viewBlend < 0.02) this.lastView = { pos: this.viewTarget.pos.clone(), quat: this.viewQuat.clone() };
+      else {
+        // Re-targeting inside a station view glides instead of cutting.
+        const k = 1 - Math.exp(-8 * dt);
+        this.lastView.pos.lerp(this.viewTarget.pos, k);
+        this.lastView.quat.slerp(this.viewQuat, k);
+      }
     }
     const e = easeInOut(this.viewBlend);
     if (this.lastView && e > 0) {
