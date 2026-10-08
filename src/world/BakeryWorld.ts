@@ -1,9 +1,12 @@
 import * as THREE from 'three';
+import { RECIPES, RECIPE_ORDER, type RecipeId } from '../game/Recipes';
 import { MaterialLibrary, worldBox, worldPlane, shadowed } from '../render/Materials';
 import { NO_OUTLINE_LAYER } from '../render/RenderPipeline';
 import { LightingRig } from '../render/LightingRig';
 import { CanvasArt } from '../render/CanvasArt';
 import { PropKit, scaleUV } from './props';
+
+const RECIPE_NAMES: Record<RecipeId, string> = { roll: '모닝롤', baguette: '바게트', croissant: '크루아상', pretzel: '프레첼' };
 
 /**
  * The bakery: one cozy room split by the display counter.
@@ -474,7 +477,7 @@ export class BakeryWorld {
     const menu = k.chalkboard(
       0.7,
       0.88,
-      this.art.chalkboard('오늘의 빵', ['모닝롤|₩1,500', '바게트|₩3,800', '크루아상|₩3,200', '시나몬롤|₩3,500']),
+      this.art.chalkboard('오늘의 빵', RECIPE_ORDER.map((r) => `${RECIPE_NAMES[r]}|₩${RECIPES[r].price.toLocaleString('ko-KR')}`)),
     );
     this.add(menu, 3.95, 1.95, ROOM.minZ + 0.03);
 
@@ -559,16 +562,18 @@ export class BakeryWorld {
     this.block(rackX - 0.28, rackZ - 0.38, ROOM.maxX, rackZ + 0.38);
 
     const sinkCab = new THREE.Mesh(worldBox(0.62, 0.86, 1.0, 1.2), m.sage);
-    sinkCab.position.set(4.17, 0.43, -3.0 + 0.55);
+    // Sink sits against the log pile, clear of the tray rack in front of it.
+    const sinkZ = -2.82;
+    sinkCab.position.set(4.17, 0.43, sinkZ);
     const sinkTop = new THREE.Mesh(worldBox(0.68, 0.07, 1.06, 1.4), m.butcher);
-    sinkTop.position.set(4.17, 0.895, -2.45);
+    sinkTop.position.set(4.17, 0.895, sinkZ);
     const basin = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.04, 0.5), m.ceramic);
-    basin.position.set(4.17, 0.94, -2.45);
+    basin.position.set(4.17, 0.94, sinkZ);
     const tap = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.014, 6, 14, Math.PI), m.copper);
-    tap.position.set(4.38, 1.02, -2.45);
+    tap.position.set(4.38, 1.02, sinkZ);
     tap.rotation.y = Math.PI / 2;
     this.group.add(shadowed(sinkCab), shadowed(sinkTop), basin, shadowed(tap));
-    this.block(3.85, -3.0, ROOM.maxX, -1.9);
+    this.block(3.85, sinkZ - 0.53, ROOM.maxX, sinkZ + 0.53);
 
     const binGroup = new THREE.Group();
     const binBody = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.17, 0.5, 18), m.walnut);
